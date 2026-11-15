@@ -7,6 +7,7 @@ module OpenSketchupDC
     # pushed back as a JSON snapshot via window.OpenDC.update(state).
     module Panel
       PANEL_FILE = File.join(PLUGIN_DIR, "ui", "panel", "index.html")
+      GRAPH_FILE = File.join(PLUGIN_DIR, "ui", "graph", "index.html")
 
       @dialog = nil
       @push_pending = false
@@ -91,6 +92,7 @@ module OpenSketchupDC
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
+        when "graph"         then cmd_graph(p["entityId"])
         when "qaEcho"        then @qa_last = p["r"] # dev/QA read-back channel
         when "convert" then with_entity(p["entityId"]) do |e|
           Convert.to_open_dc(e)
@@ -403,6 +405,54 @@ module OpenSketchupDC
         @fx_dialog.bring_to_front
       rescue StandardError => e
         push_error(e.message)
+      end
+
+      # Floating dependency-graph window. One shared dialog retargets to
+      # whichever entity card's Graph button was clicked last; the page
+      # handshake (gready) triggers the first data push after load.
+      def cmd_graph(eid)
+        with_entity(eid) do |ent|
+          ps = DCReader.read(ent, dict_name: DCReader.dict_name_for(ent), entity_id: eid)
+          @graph_pending = {
+            "label" => entity_label(ent),
+            "graph" => entity_graph(ps)
+          }
+          if @graph_dialog.nil?
+            @graph_dialog = ::UI::HtmlDialog.new(
+              dialog_title: "Open DC - Dependency Graph",
+              preferences_key: "#{PLUGIN_ID}_graph",
+              scrollable: true,
+              resizable: true,
+              width: 640,
+              height: 520,
+              min_width: 320,
+              min_height: 240,
+              style: ::UI::HtmlDialog::STYLE_UTILITY
+            )
+            @graph_dialog.add_action_callback("gready") do |_ctx, arg|
+              @gqa = arg unless arg.to_s.empty? # dev/QA read-back channel
+              push_graph
+            end
+            @graph_dialog.set_can_close do
+              @graph_dialog = nil
+              true
+            end
+            @graph_dialog.set_file(GRAPH_FILE)
+            @graph_dialog.show
+          else
+            push_graph
+            @graph_dialog.bring_to_front
+          end
+        end
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      def push_graph
+        return if @graph_dialog.nil? || @graph_pending.nil?
+
+        json = JSON.generate(json_safe(@graph_pending))
+        @graph_dialog.execute_script("window.renderGraph && window.renderGraph(#{json})")
       end
 
       def functions_reference_html

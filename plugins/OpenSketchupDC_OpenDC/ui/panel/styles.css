@@ -315,39 +315,3 @@ button.small { padding: 1px 7px; font-size: 12px; }
 #empty { text-align: center; padding: 40px 20px; color: var(--dim); }
 #empty .hint { font-size: 12px; }
 code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; }
-
-/* ---------- dependency graph ---------- */
-.gscroll { overflow-x: auto; padding: 4px 0; }
-.depgraph { display: block; margin: 4px 8px; }
-.gnode { cursor: pointer; }
-.gnode rect {
-  fill: var(--bg3);
-  stroke: var(--border);
-  stroke-width: 1;
-}
-.gnode:hover rect { stroke: var(--accent); }
-.gnode text {
-  fill: var(--fg);
-  font-size: 10.5px;
-  font-family: ui-monospace, Consolas, monospace;
-  text-anchor: middle;
-  pointer-events: none;
-}
-.gnode.ext rect { stroke-dasharray: 4 3; stroke: #2c5240; }
-.gnode.ext text { fill: var(--accent2); }
-.gnode.virt rect { stroke-dasharray: 4 3; stroke: #3a5a80; }
-.gnode.virt text { fill: var(--accent); }
-.gnode.cyclic rect { stroke: var(--error); fill: rgba(230,100,100,.12); }
-.gnode.cyclic text { fill: var(--error); }
-.gedge {
-  fill: none;
-  stroke: var(--muted);
-  stroke-width: 1.2;
-  opacity: .55;
-  marker-end: url(#garr);
-}
-.garr { fill: var(--muted); opacity: .55; }
-.prow.flash .pname, .prow.flash .pname b {
-  color: var(--accent);
-  transition: color .15s;
-}

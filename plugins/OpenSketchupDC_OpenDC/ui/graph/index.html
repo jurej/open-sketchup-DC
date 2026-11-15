@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Open DC - Dependency Graph</title>
+  <style>
+    :root {
+      --bg: #17181c; --bg2: #1e1f24; --bg3: #23242b;
+      --fg: #d8d8de; --dim: #a9a9b2; --muted: #8a8a93;
+      --accent: #4f9cf9; --accent2: #7fd0a2;
+      --warn: #e69664; --error: #e66565; --border: #2a2b31;
+    }
+    body { background: var(--bg); color: var(--fg); margin: 0;
+      font: 13px/1.45 "Segoe UI", sans-serif; }
+    header {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 5;
+    }
+    #gtitle { font-weight: 600; color: var(--accent); }
+    .hint { font-size: 11px; color: var(--muted); }
+    #ghost { padding: 6px; }
+    .gmsg { color: var(--muted); padding: 20px; }
+    .gscroll { overflow: auto; padding: 4px; }
+    .depgraph { display: block; margin: 4px; }
+    .gnode { cursor: pointer; }
+    .gnode rect { fill: var(--bg3); stroke: var(--border); stroke-width: 1; }
+    .gnode:hover rect { stroke: var(--accent); }
+    .gnode text {
+      fill: var(--fg); font-size: 10.5px;
+      font-family: ui-monospace, Consolas, monospace;
+      text-anchor: middle; pointer-events: none;
+    }
+    .gnode.ext rect { stroke-dasharray: 4 3; stroke: #2c5240; }
+    .gnode.ext text { fill: var(--accent2); }
+    .gnode.virt rect { stroke-dasharray: 4 3; stroke: #3a5a80; }
+    .gnode.virt text { fill: var(--accent); }
+    .gnode.cyclic rect { stroke: var(--error); fill: rgba(230, 100, 100, .12); }
+    .gnode.cyclic text { fill: var(--error); }
+    .gnode.dimmed { opacity: .35; }
+    .gedge {
+      fill: none; stroke: var(--muted); stroke-width: 1.2;
+      opacity: .4; marker-end: url(#garr);
+    }
+    .gedge.lit { stroke: var(--accent); opacity: 1; stroke-width: 1.6; }
+    .gedge.dimmed { opacity: .12; }
+    .garr { fill: var(--muted); opacity: .4; }
+  </style>
+</head>
+<body>
+  <header>
+    <span id="gtitle">Dependency Graph</span>
+    <span class="hint">click a node to highlight its connections</span>
+  </header>
+  <div id="ghost"><div class="gmsg">Loading…</div></div>
+  <script src="graph.js"></script>
+  <script>
+    (function () {
+      var host = document.getElementById("ghost");
+
+      window.renderGraph = function (data) {
+        document.getElementById("gtitle").textContent =
+          (data.label || "") + " — dependencies";
+        host.innerHTML = OpenDCGraph.render(data.graph);
+        host.querySelectorAll(".gnode").forEach(function (gn) {
+          gn.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            highlight(gn.getAttribute("data-gp"));
+          });
+        });
+        host.addEventListener("click", function () { highlight(null); });
+      };
+
+      // Highlight the node's direct deps + dependents; dim the rest.
+      function highlight(name) {
+        var lit = {};
+        if (name) {
+          lit[name] = true;
+          host.querySelectorAll(".gedge").forEach(function (p) {
+            var hit = p.getAttribute("data-f") === name ||
+                      p.getAttribute("data-t") === name;
+            p.classList.toggle("lit", hit);
+            p.classList.toggle("dimmed", !hit);
+            if (hit) {
+              lit[p.getAttribute("data-f")] = true;
+              lit[p.getAttribute("data-t")] = true;
+            }
+          });
+        } else {
+          host.querySelectorAll(".gedge").forEach(function (p) {
+            p.classList.remove("lit"); p.classList.remove("dimmed");
+          });
+        }
+        host.querySelectorAll(".gnode").forEach(function (g) {
+          g.classList.toggle("dimmed", !!(name && !lit[g.getAttribute("data-gp")]));
+        });
+      }
+
+      if (window.sketchup && sketchup.gready) sketchup.gready("");
+    })();
+  </script>
+</body>
+</html>

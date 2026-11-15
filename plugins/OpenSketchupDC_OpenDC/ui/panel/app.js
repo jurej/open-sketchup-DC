@@ -130,6 +130,7 @@ window.OpenDC = (function () {
         '<span class="badge kind">' + esc(e.kind) + '</span>' +
         '<span class="badge ' + (e.engine === "osdc" ? "osdc" : "") + '">' +
           (e.engine === "osdc" ? "Open DC" : "Classic") + '</span>' +
+        '<button class="small" data-graph title="Dependency graph">⤢</button>' +
         (e.engine === "osdc"
           ? '<button class="small" data-act="revert">Revert</button>'
           : '<button class="small" data-act="convert">Convert</button>') +
@@ -137,69 +138,16 @@ window.OpenDC = (function () {
         '<div class="tabs">' +
         '<button data-tab="options" class="' + (tab === "options" ? "active" : "") + '">Options</button>' +
         '<button data-tab="advanced" class="' + (tab === "advanced" ? "active" : "") + '">Advanced</button>' +
-        '<button data-tab="graph" class="' + (tab === "graph" ? "active" : "") + '">Graph</button>' +
         '</div>' +
         '<div class="params">' +
-        (tab === "graph"
-          ? graphHtml(e)
-          : params.map(function (p) { return renderParam(e, p, tab === "advanced"); }).join("") +
-            (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>')) +
+        params.map(function (p) { return renderParam(e, p, tab === "advanced"); }).join("") +
+        (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>') +
         '</div>' +
         addFormHtml(e) +
         '</div>';
     }).join("");
 
     wireEntityCards(host);
-  }
-
-  // Read-only dependency graph: columns by topo level, edges dep -> dependent.
-  function graphHtml(e) {
-    var g = e.graph;
-    if (!g || !g.nodes || !g.nodes.length) {
-      return '<div class="prow"><span class="pname">No parameter dependencies.</span></div>';
-    }
-    var NW = 132, NH = 26, GX = 36, GY = 14, PAD = 10;
-    var cols = {};
-    g.nodes.forEach(function (n) {
-      var l = n.external || n.virtual ? 0 : (n.level || 0);
-      (cols[l] = cols[l] || []).push(n);
-    });
-    var lvls = Object.keys(cols).map(Number).sort(function (a, b) { return a - b; });
-    var pos = {}, maxRows = 0;
-    lvls.forEach(function (l, ci) {
-      cols[l].forEach(function (n, ri) {
-        pos[n.id] = { x: PAD + ci * (NW + GX), y: PAD + ri * (NH + GY), n: n };
-      });
-      if (cols[l].length > maxRows) maxRows = cols[l].length;
-    });
-    var w = PAD * 2 + lvls.length * (NW + GX) - GX;
-    var h = PAD * 2 + maxRows * (NH + GY) - GY;
-
-    var paths = g.edges.map(function (e2) {
-      var a = pos[e2.from], b = pos[e2.to];
-      if (!a || !b) return "";
-      var x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2;
-      var mx = (x1 + x2) / 2;
-      return '<path class="gedge" d="M' + x1 + ' ' + y1 +
-        ' C' + mx + ' ' + y1 + ' ' + mx + ' ' + y2 + ' ' + x2 + ' ' + y2 + '"/>';
-    }).join("");
-
-    var boxes = g.nodes.map(function (n) {
-      var p = pos[n.id];
-      var cls = "gnode" + (n.external ? " ext" : "") + (n.virtual ? " virt" : "") +
-        (n.cyclic ? " cyclic" : "");
-      var label = n.external ? n.id : n.id;
-      return '<g class="' + cls + '" data-gp="' + esc(n.id) + '"' +
-        ' transform="translate(' + p.x + ',' + p.y + ')">' +
-        '<rect width="' + NW + '" height="' + NH + '" rx="5"/>' +
-        '<text x="' + (NW / 2) + '" y="' + (NH / 2 + 4) + '">' + esc(label) + '</text></g>';
-    }).join("");
-
-    return '<div class="gscroll"><svg class="depgraph" width="' + w + '" height="' + h + '"' +
-      ' viewBox="0 0 ' + w + ' ' + h + '">' +
-      '<defs><marker id="garr" markerWidth="8" markerHeight="8" refX="7" refY="4"' +
-      ' orient="auto"><path d="M0 0 L8 4 L0 8 Z" class="garr"/></marker></defs>' +
-      paths + boxes + '</svg></div>';
   }
 
   function renderParam(e, p, advanced) {
@@ -387,19 +335,9 @@ window.OpenDC = (function () {
       });
     });
 
-    host.querySelectorAll(".gnode").forEach(function (gn) {
-      gn.addEventListener("click", function () {
-        var name = gn.getAttribute("data-gp");
-        if (name.indexOf("!") >= 0) return;
-        tabs[gn.closest(".card").getAttribute("data-eid")] = "advanced";
-        render();
-        var btn = host.querySelector('[data-edit][data-name="' + name + '"]');
-        var row = btn ? btn.closest(".prow") : null;
-        if (row) {
-          row.scrollIntoView({ block: "center" });
-          row.classList.add("flash");
-          setTimeout(function () { row.classList.remove("flash"); }, 1200);
-        }
+    host.querySelectorAll("[data-graph]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        send("graph", { entityId: btn.closest(".card").getAttribute("data-eid") });
       });
     });
 
