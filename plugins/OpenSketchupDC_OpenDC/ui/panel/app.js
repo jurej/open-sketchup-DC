@@ -194,7 +194,8 @@ window.OpenDC = (function () {
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
       '<div class="full"><label>formula - click an attribute below to insert it</label>' +
-      '<input data-f="formula" value="' + esc(p.formula || "") + '">' +
+      '<div class="fxedit"><div class="fxback" aria-hidden="true"></div>' +
+      '<input data-f="formula" class="fxsrc" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(p.formula || "") + '"></div>' +
       paletteHtml(e, p) +
       '<div class="fxstatus"></div></div>' +
       '<div><label>default</label><input data-f="default" value="' + esc(fmt(p["default"])) + '"></div>' +
@@ -301,12 +302,18 @@ window.OpenDC = (function () {
         var ins = c.getAttribute("data-ins");
         input.setRangeText(ins, input.selectionStart, input.selectionEnd, "end");
         input.focus();
+        paintFx(input);
         queueValidation(input);
       });
     });
 
     host.querySelectorAll('input[data-f="formula"]').forEach(function (inp) {
-      inp.addEventListener("input", function () { queueValidation(inp); });
+      inp.addEventListener("input", function () {
+        paintFx(inp);
+        queueValidation(inp);
+      });
+      inp.addEventListener("scroll", function () { paintFx(inp); });
+      paintFx(inp);
       queueValidation(inp);
     });
 
@@ -353,6 +360,71 @@ window.OpenDC = (function () {
         });
       });
     });
+  }
+
+  /* ---------------- formula pill highlighting ---------------- */
+
+  var FX_KEYWORDS = { TRUE: 1, FALSE: 1, AND: 1, OR: 1, NOT: 1 };
+
+  function fxKnown(card) {
+    var eid = card.getAttribute("data-eid");
+    var e = (state.entities || []).find(function (x) { return x.entityId === eid; });
+    var k = {};
+    ((e && e.params) || []).forEach(function (p) { k[p.name] = true; });
+    if (k.copies) k.copy = true;
+    return k;
+  }
+
+  // Lightweight tokenizer mirroring the Ruby lexer: " opens strings, ' only
+  // follows digits (feet). Known attribute names render as chips, scope!
+  // refs as ref chips, unknown bare identifiers as error chips.
+  function fxPaintHtml(src, known) {
+    var out = "", i = 0, n = src.length;
+    while (i < n) {
+      var c = src[i];
+      if (/[\d.]/.test(c)) {
+        var nm = /^[\d.]+[A-Za-z"']*/.exec(src.slice(i));
+        out += esc(nm[0]);
+        i += nm[0].length;
+        continue;
+      }
+      if (c === '"') {
+        var j = i + 1;
+        while (j < n && src[j] !== '"') j++;
+        var str = src.slice(i, Math.min(j + 1, n));
+        out += esc(str).replace(/[A-Za-z_][A-Za-z0-9_]*/g, function (w) {
+          return known[w.toLowerCase()] ? '<span class="pill attr">' + w + "</span>" : w;
+        });
+        i = j + (j < n ? 1 : 0);
+        continue;
+      }
+      var m = /^[A-Za-z_][A-Za-z0-9_]*(!\s*[A-Za-z_][A-Za-z0-9_]*)?/.exec(src.slice(i));
+      if (m) {
+        var tok = m[0];
+        var rest = src.slice(i + tok.length);
+        if (tok.indexOf("!") !== -1) {
+          out += '<span class="pill ref">' + esc(tok) + "</span>";
+        } else if (/^\s*\(/.test(rest) || FX_KEYWORDS[tok.toUpperCase()]) {
+          out += esc(tok); // function name or keyword - plain
+        } else if (known[tok.toLowerCase()]) {
+          out += '<span class="pill attr">' + esc(tok) + "</span>";
+        } else {
+          out += '<span class="pill bad">' + esc(tok) + "</span>";
+        }
+        i += tok.length;
+        continue;
+      }
+      out += esc(c);
+      i++;
+    }
+    return out;
+  }
+
+  function paintFx(inp) {
+    var back = inp.parentElement.querySelector(".fxback");
+    if (!back) return;
+    back.innerHTML = fxPaintHtml(inp.value, fxKnown(inp.closest(".card")));
+    back.scrollLeft = inp.scrollLeft;
   }
 
   /* ---------------- formula validation ---------------- */
