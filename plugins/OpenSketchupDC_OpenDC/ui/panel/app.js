@@ -101,7 +101,6 @@ window.OpenDC = (function () {
         '<span class="pname" title="' + esc(p.name) + '"><b>' + esc(p.displayName) + '</b></span>' +
         '<span>' + inputFor(p, "batch",
           unitSuffix(p) ? ' <span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span>' +
-        '<span class="formula-hint">' + (p.formula ? "fx" : "") + '</span>' +
         '</div>';
     }).join("");
 
@@ -192,8 +191,10 @@ window.OpenDC = (function () {
         : inputFor(p, e.entityId, pun)) + '</span>' +
       '<span>' +
       (advanced && !p.internal
-        ? '<button class="small" data-edit="' + esc(key) + '" data-name="' + esc(p.name) + '">fx</button>'
-        : (p.formula ? '<span class="formula-hint">fx</span>' : '')) +
+        ? '<button class="small' + (p.formula ? " fx-on" : "") + '" data-edit="' +
+          esc(key) + '" data-name="' + esc(p.name) + '"' +
+          (p.formula ? ' title="Has formula: ' + esc(p.formula) + '"' : "") + '>fx</button>'
+        : "") +
       '</span>' +
       err +
       '</div>';

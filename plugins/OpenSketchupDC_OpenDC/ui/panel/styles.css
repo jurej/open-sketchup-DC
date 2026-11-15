@@ -73,6 +73,13 @@ button.danger:hover { border-color: var(--error); background: rgba(229,100,108,.
 button.ghost-acc { color: var(--accent); border-color: rgba(79,156,249,.45); }
 button.ghost-acc:hover { background: rgba(79,156,249,.15); border-color: var(--accent); }
 button.small { padding: 1px 7px; font-size: 12px; }
+button.fx-on {
+  color: var(--accent);
+  border-color: rgba(79, 156, 249, 0.55);
+  background: rgba(79, 156, 249, 0.12);
+  font-weight: 700;
+}
+button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--accent); }
 
 /* ---------- banner / toast ---------- */
 #banner {
