@@ -162,6 +162,48 @@ button.small { padding: 1px 7px; font-size: 12px; }
 }
 .ro .pun { position: static; transform: none; margin-left: 3px; }
 
+/* ---------- options tag editor ---------- */
+.opted {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 6px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: text;
+}
+.opted:focus-within { border-color: var(--accent); }
+.optchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 9px;
+  background: rgba(127,208,162,.18);
+  box-shadow: inset 0 0 0 1px #2c5240;
+  font-size: 12px;
+}
+.optx {
+  border: none;
+  background: none;
+  color: var(--dim);
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+.optx:hover { color: var(--error); }
+.optin {
+  flex: 1;
+  min-width: 90px;
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+}
+.optin:focus { outline: none; border: none; }
+
 /* ---------- formula builder ---------- */
 .fxedit { position: relative; margin-top: 2px; }
 .pedit .fxed {

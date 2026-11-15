@@ -197,7 +197,11 @@ window.OpenDC = (function () {
       }).join("") + '</select></div>' +
       '<div><label>units</label>' + unitSelect("units", p.units || "") + '</div>' +
       '<div><label>formula units</label>' + unitSelect("formulaunits", p.formulaunits || "") + '</div>' +
-      '<div class="full"><label>options (Label=value&amp;…)</label><input data-f="options" value="' + esc(p.options || "") + '"></div>' +
+      '<div class="full"><label>options - type Label or Label=value, Enter adds it</label>' +
+      '<div class="opted" data-opted>' +
+      (p.optionsList || []).map(function (o) { return optChipHtml(o.label, o.value); }).join("") +
+      '<input class="optin" placeholder="Label=value">' +
+      '</div><input type="hidden" data-f="options" value="' + esc(p.options || "") + '"></div>' +
       '<div><label>formlabel</label><input data-f="formlabel" value="' + esc(p.formlabel || "") + '"></div>' +
       '<div><label>label</label><input data-f="label" value="' + esc(p.label || "") + '"></div>' +
       '<div class="full row-actions">' +
@@ -229,6 +233,73 @@ window.OpenDC = (function () {
     return '<span class="uwrap"><input type="text" value="' +
       esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '"' + data + ph + '>' +
       (pun || "") + '</span>';
+  }
+
+  /* ---------------- options tag editor ---------------- */
+  // Chips of Label=value with an inline input; serialized to the hidden
+  // data-f="options" input as classic `l=v&l=v` on every change.
+
+  function optChipHtml(label, value) {
+    var show = String(value) === String(label) ? label : label + "=" + value;
+    return '<span class="optchip"><span class="optlabel">' + esc(show) + '</span>' +
+      '<button type="button" class="optx" title="Remove option">&times;</button></span>';
+  }
+
+  function optSync(box) {
+    var pairs = [];
+    box.querySelectorAll(".optchip").forEach(function (c) {
+      pairs.push(c.querySelector(".optlabel").textContent);
+    });
+    box.parentElement.querySelector('input[data-f="options"]').value = pairs.join("&");
+  }
+
+  // Commit pending input text as chip(s). Accepts "l", "l=v", or a pasted
+  // "l=v&l=v" run. Returns false if nothing valid was committed.
+  function optCommit(input) {
+    var box = input.closest("[data-opted]");
+    var raw = input.value.trim();
+    if (raw === "") return false;
+    var added = false;
+    raw.split("&").forEach(function (part) {
+      var t = part.trim();
+      if (!t) return;
+      var eq = t.indexOf("=");
+      var label = eq === -1 ? t : t.slice(0, eq).trim();
+      var value = eq === -1 ? t : t.slice(eq + 1).trim();
+      if (!label) return;
+      input.insertAdjacentHTML("beforebegin", optChipHtml(label, value || label));
+      added = true;
+    });
+    input.value = "";
+    if (added) optSync(box);
+    return added;
+  }
+
+  function wireOptionEditors(host) {
+    host.querySelectorAll("[data-opted]").forEach(function (box) {
+      var input = box.querySelector(".optin");
+      box.addEventListener("mousedown", function (ev) {
+        if (ev.target === box) { ev.preventDefault(); input.focus(); }
+      });
+      input.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === "Tab") {
+          if (optCommit(input)) ev.preventDefault();
+        } else if (ev.key === "Backspace" && input.value === "") {
+          var last = box.querySelector(".optchip:last-of-type");
+          if (last) { last.remove(); optSync(box); }
+        } else if (ev.key === "Escape") {
+          input.value = "";
+        }
+      });
+      input.addEventListener("blur", function () { optCommit(input); });
+      // delegated so chips added later are covered too
+      box.addEventListener("click", function (ev) {
+        if (ev.target.closest(".optx")) {
+          ev.target.closest(".optchip").remove();
+          optSync(box);
+        }
+      });
+    });
   }
 
   function addFormHtml(e) {
@@ -292,6 +363,8 @@ window.OpenDC = (function () {
     host.querySelectorAll("[data-fxdocs]").forEach(function (b) {
       b.addEventListener("click", function () { send("fxDocs"); });
     });
+
+    wireOptionEditors(host);
 
     host.querySelectorAll(".fxed").forEach(function (ed) {
       var hidden = ed.closest(".fxedit").querySelector('input[data-f="formula"]');
