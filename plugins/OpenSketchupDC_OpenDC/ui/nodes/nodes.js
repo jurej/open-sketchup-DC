@@ -357,7 +357,7 @@
       });
     });
     var roots = Object.keys(nodes).filter(function (id) { return !fed[id]; });
-    return { nodes: nodes, links: links, root: roots[0] };
+    return { nodes: nodes, links: links, root: rootId ? String(rootId) : roots[0] };
   }
 
   // ---- preview / apply ---------------------------------------------------
@@ -455,7 +455,7 @@
       delay: 120
     });
     components.forEach(function (c) { editor.register(c); });
-    window.__dbg = { editor: editor, comps: components };
+    window.__dbg = { editor: editor, comps: components, markRoots: markRoots };
 
     buildEditor(payload.graph || { nodes: {}, links: [] }).then(function () {
       markRoots();
@@ -468,7 +468,7 @@
       toast("graph build failed: " + (e && e.message || e), true);
     });
 
-    editor.on("connectioncreated connectionremoved noderemoved", function () {
+    editor.on("connectioncreated connectionremoved noderemoved nodecreated", function () {
       // re-render ports so manual fields hide/show on (dis)connect
       editor.nodes.forEach(function (n) { if (n.update) n.update(); });
       markRoots();
@@ -492,15 +492,63 @@
     requestPreview();
   };
 
-  // Exactly one node has no outgoing connections - that's the result.
+  // Exactly one node is the result - the root the formula is emitted
+  // from. Other sinks (disconnected fragments, freshly added nodes)
+  // are NOT results. Tracked as a stable rootId: kept while still a
+  // sink, followed downstream when wired into another node, and
+  // re-picked (largest upstream tree) when deleted.
+  var rootId = null;
+
+  function isSink(n) {
+    return !Array.from(n.outputs.values())
+      .some(function (o) { return o.connections.length > 0; });
+  }
+
+  function downstreamSink(n) {
+    var seen = {};
+    while (n && !seen[n.id]) {
+      seen[n.id] = true;
+      if (isSink(n)) return n;
+      var nxt = null;
+      n.outputs.forEach(function (o) {
+        if (!nxt && o.connections.length) nxt = o.connections[0].input.node;
+      });
+      n = nxt;
+    }
+    return null;
+  }
+
+  function upstreamCount(n) {
+    var seen = {};
+    (function walk(m) {
+      m.inputs.forEach(function (i) {
+        i.connections.forEach(function (c) {
+          var src = c.output.node;
+          if (!seen[src.id]) { seen[src.id] = true; walk(src); }
+        });
+      });
+    })(n);
+    return Object.keys(seen).length;
+  }
+
   function markRoots() {
     if (!editor) return;
+    var sinks = editor.nodes.filter(isSink);
+    var root = editor.nodes.find(function (n) { return String(n.id) === String(rootId); });
+    if (root && !isSink(root)) root = downstreamSink(root);
+    if (!root || !isSink(root)) {
+      root = null;
+      var best = -1;
+      sinks.forEach(function (s) {
+        var c = upstreamCount(s);
+        if (c > best) { best = c; root = s; }
+      });
+    }
+    rootId = root ? root.id : null;
     editor.nodes.forEach(function (n) {
-      var fed = Array.from(n.outputs.values())
-        .some(function (o) { return o.connections.length > 0; });
-      var root = !fed;
-      if (n.data.root !== root) {
-        n.data.root = root;
+      var isRoot = !!root && n.id === root.id;
+      if (!!n.data.root !== isRoot) {
+        n.data.root = isRoot || undefined;
         n.update();
       }
     });
