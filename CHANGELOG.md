@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 — beta 1.1
+
+- **Right-click context menu**: an *Open DC* submenu (Parameter Panel,
+  Interact, Recompute, Convert/Revert) appears when right-clicking a
+  dynamic component. Non-DC selections are untouched.
+
 ## v0.1.0 — beta 1
 
 First public beta. Open DC is a modern replacement surface for SketchUp

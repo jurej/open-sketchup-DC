@@ -6,7 +6,7 @@ module OpenSketchupDC
   module OpenDC
     PLUGIN_ID = "OpenSketchupDC_OpenDC".freeze
     PLUGIN_NAME = "Open DC".freeze
-    VERSION = "0.1.0".freeze
+    VERSION = "0.1.1".freeze
 
     # Trimble Dynamic Components dictionary (the "classic" format).
     DC_DICT = "dynamic_attributes".freeze
