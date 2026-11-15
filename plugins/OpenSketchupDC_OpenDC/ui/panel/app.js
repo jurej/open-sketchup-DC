@@ -5,7 +5,7 @@
 /* Open DC parameter panel - vanilla JS, talks to Ruby via sketchup.dc(json). */
 window.OpenDC = (function () {
   var state = { entities: [], batch: null, dcAvailable: true, globals: [] };
-  var tabs = {};      // entityId -> "options" | "advanced"
+  var configMode = false; // author view: formulas, structure, ordering
   var openAdd = {};   // entityId -> bool
   var openEdit = {};  // entityId::name -> bool (advanced editor expanded)
   var fxTimers = {};  // entityId::name -> debounce timer
@@ -124,25 +124,26 @@ window.OpenDC = (function () {
     var host = document.getElementById("entities");
     var q = filter();
     host.innerHTML = ents.map(function (e) {
-      var tab = tabs[e.entityId] || "options";
+      var cfg = configMode;
       var params = (e.params || []).filter(function (p) {
-        return tab === "advanced" ? match(p, q) : (match(p, q) && p.access !== "NONE" && !p.internal);
+        return cfg ? match(p, q) : (match(p, q) && p.access !== "NONE" && !p.internal);
       });
       return '<div class="card" data-eid="' + esc(e.entityId) + '">' +
         '<header>' +
-        '<span class="name" title="' + esc(e.label) + '">' + esc(e.label) + '</span>' +
+        (cfg
+          ? '<input class="cname" data-cname value="' + esc(e.label) + '"' +
+            ' title="Component name (writes _name)">'
+          : '<span class="name" title="' + esc(e.label) + '">' + esc(e.label) + '</span>') +
         '<span class="badge kind">' + esc(e.kind) + '</span>' +
         '<span class="badge ' + (e.engine === "osdc" ? "osdc" : "") + '">' +
           (e.engine === "osdc" ? "Open DC" : "Classic") + '</span>' +
-        '<button class="small ghost-acc" data-graph title="Dependency graph">⤢</button>' +
-        (e.engine === "osdc"
-          ? '<button class="small danger" data-act="revert">Revert</button>'
-          : '<button class="small primary" data-act="convert">Convert</button>') +
+        (cfg ? '<button class="small ghost-acc" data-graph title="Dependency graph">⤢</button>' : "") +
+        (cfg
+          ? (e.engine === "osdc"
+            ? '<button class="small danger" data-act="revert">Revert</button>'
+            : '<button class="small primary" data-act="convert">Convert</button>')
+          : "") +
         '</header>' +
-        '<div class="tabs">' +
-        '<button data-tab="options" class="' + (tab === "options" ? "active" : "") + '">Options</button>' +
-        '<button data-tab="advanced" class="' + (tab === "advanced" ? "active" : "") + '">Advanced</button>' +
-        '</div>' +
         '<div class="params">' +
         params.map(function (p, i) {
           var sec = p.section || "";
@@ -156,11 +157,11 @@ window.OpenDC = (function () {
                     (sec ? '<span>' + esc(sec) + '</span>' : "") + '</div>';
             }
           }
-          return hdr + renderParam(e, p, tab === "advanced");
+          return hdr + renderParam(e, p, cfg);
         }).join("") +
         (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>') +
         '</div>' +
-        addFormHtml(e) +
+        (cfg ? addFormHtml(e) : "") +
         '</div>';
     }).join("");
 
@@ -177,9 +178,10 @@ window.OpenDC = (function () {
     var grip = advanced && !p.internal
       ? '<span class="grip" draggable="true" title="Drag to reorder">&#x2807;</span>'
       : "";
+    var tip = advanced ? (p.tooltip || p.name) : (p.tooltip || "");
     var html = '<div class="prow' + (p.internal ? " internal" : "") + '"' +
       (p.internal ? "" : ' data-pname="' + esc(p.name) + '"') + '>' +
-      '<span class="pname" title="' + esc(p.tooltip || p.name) + '">' + grip +
+      '<span class="pname"' + (tip ? ' title="' + esc(tip) + '"' : "") + '>' + grip +
       '<b>' + esc(p.displayName) + '</b>' +
       (p.tooltip ? ' <span class="tipdot">i</span>' : '') +
       (p.internal ? ' <span class="formula-hint">sys</span>' : '') +
@@ -356,11 +358,10 @@ window.OpenDC = (function () {
       });
     });
 
-    host.querySelectorAll("[data-tab]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var card = btn.closest(".card");
-        tabs[card.getAttribute("data-eid")] = btn.getAttribute("data-tab");
-        render();
+    host.querySelectorAll("[data-cname]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        var card = inp.closest(".card");
+        send("rename", { entityId: card.getAttribute("data-eid"), name: inp.value });
       });
     });
 
@@ -498,7 +499,7 @@ window.OpenDC = (function () {
     wireReorder(host);
   }
 
-  /* ---------------- attribute reorder (advanced tab) ---------------- */
+  /* ---------------- attribute reorder (configure mode) ---------------- */
   // Drag the grip to reorder rows; on drop the visible sequence
   // (names + &Title& markers) is stored as _itemorder.
   function orderTokens(box) {
@@ -928,6 +929,11 @@ window.OpenDC = (function () {
   }
 
   document.getElementById("search").addEventListener("input", render);
+  document.getElementById("btn-config").addEventListener("click", function () {
+    configMode = !configMode;
+    this.classList.toggle("on", configMode);
+    render();
+  });
   document.getElementById("btn-refresh").addEventListener("click", function () { send("refresh"); });
   document.getElementById("btn-redraw").addEventListener("click", function () {
     send("redraw", { entityIds: (state.entities || []).map(function (e) { return e.entityId; }) });

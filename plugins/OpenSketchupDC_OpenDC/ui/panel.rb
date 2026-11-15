@@ -106,6 +106,7 @@ module OpenSketchupDC
         when "addParam"      then cmd_add_param(p)
         when "deleteParam"   then cmd_delete_param(p)
         when "reorder"       then cmd_reorder(p)
+        when "rename"        then cmd_rename(p)
         when "batchSet"      then cmd_batch_set(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
@@ -198,6 +199,22 @@ module OpenSketchupDC
                                dict_name: dict_name)
           end
           reevaluate(e, dict_name)
+          push_state
+        end
+      end
+
+      # Component rename from the configure view: writes the DC "_name"
+      # system key on the owner dict - the same name node!/parent!
+      # scoping resolves and the same one classic DC shows.
+      def cmd_rename(p)
+        with_entity(p["entityId"]) do |e|
+          dict_name = DCReader.dict_name_for(e)
+          name = p["name"].to_s.strip
+          next if name.empty?
+
+          Helpers.undo_wrap(Sketchup.active_model, "Open DC: Rename") do
+            DCWriter.set_system(e, "_name", name, dict_name: dict_name)
+          end
           push_state
         end
       end
@@ -898,6 +915,17 @@ module OpenSketchupDC
       end
 
       def entity_label(e)
+        dn = begin
+          DCReader.dict_name_for(e)
+        rescue StandardError
+          DC_DICT
+        end
+        nm = DCReader.dict_get(DCReader.dict_of(e, dn), "_name")
+        if nm.nil? && e.is_a?(Sketchup::ComponentInstance)
+          nm = DCReader.dict_get(DCReader.dict_of(e.definition, dn), "_name")
+        end
+        return nm.to_s unless nm.to_s.empty?
+
         if e.is_a?(Sketchup::ComponentInstance)
           n = e.name.to_s.empty? ? e.definition.name : e.name
           n.to_s
