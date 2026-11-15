@@ -8,11 +8,14 @@ capabilities the classic extension can't do:
 
 | Feature | Status |
 |---|---|
-| Modern parameter panel (search, grouped views, formula editing) | beta 1 |
+| Modern parameter panel (search, sections, tooltips, drag-reorder) | beta 1 |
 | Batch-edit one parameter across many selected DCs at once | beta 1 |
+| Formula editor: pills, autocomplete, live validation, function reference | beta 1 |
+| Expression node-graph editor (visual formula building) | beta 1 |
+| Interactive dependency graph (wire attributes, edit links) | beta 1 |
 | Open engine (`open_dc`) — deterministic evaluation, `global!` cross-component links | beta 1 (opt-in Convert) |
-| Node-graph editor, presets | planned (beta 2) |
-| Interact/onClick, scale-tool handling | planned (beta 2) |
+| Reusable presets / partial component definitions | planned (beta 2) |
+| Scale-tool semantics (directional scale flags) | planned (beta 2) |
 
 ## Two engine modes
 
@@ -36,19 +39,38 @@ Requires **SketchUp 2024+** (Windows/Mac).
 
 ## Use
 
-- *Extensions → Open DC → Parameter Panel* — live parameter editor.
-  - **Options** tab: user-facing parameters (like Component Options).
-  - **Advanced** tab: every attribute incl. formulas & meta (`fx` expands
-    an editor; `*` marks instance overrides). The formula editor mixes
-    free text with inline pills: attributes, `scope!` refs, functions and
-    keywords render as non-editable chips while you type ordinary text
-    around them. Caret-aware autocomplete offers attributes, `global!`
-    refs and every real function (actions too, on `onclick`); the `ƒ(x)`
-    button opens a separate syntax/function reference window; and live
-    validation through the real parser flags typos with did-you-mean
-    suggestions and blocks them from being saved.
-  - Select multiple DCs → a **Batch edit** section appears with the shared
-    parameters (`<mixed>` = different current values).
+- *Extensions → Open DC → Parameter Panel* — live parameter editor with two
+  audiences in mind:
+  - **Options view** (default): clean consumer-facing list — just the
+    parameters meant to be changed, grouped under labeled section
+    dividers, with `ⓘ` tooltips on hover. No admin controls.
+  - **Configure mode** (⚙ gear in the toolbar): the author view — formula
+    editing, units, display rules, option lists, tooltips, attribute
+    ordering, sections, rename, add/delete attributes, engine convert.
+  - **Sections**: hover between rows in Configure and click `+ divider`
+    to split a group; click a divider's name to rename, `×` to remove,
+    drag the `⠇` grip to reorder. Stored as classic `&Title&` markers in
+    `_itemorder`.
+  - **Display rules** map to classic access levels: `edit` (TEXTBOX),
+    `list` (LIST), `view only` (VIEW), `hidden` (NONE).
+  - **Formula editing** (`fx` on a row): free text with inline pills —
+    attributes, `scope!` refs, functions and keywords render as chips
+    while you type around them. Caret-aware autocomplete offers
+    attributes, `global!` refs and every real function; `ƒ(x)` opens the
+    syntax reference; `⨂` opens the expression as a **node graph**
+    (Rete.js) — wire boxes instead of typing, with inline values on
+    unconnected inputs and a fixed FORMULA output node. Live validation
+    through the real parser explains errors in plain language
+    ("'Valles GAL2' looks like a text value - wrap it in double quotes")
+    and blocks invalid saves.
+  - **Dependency graph** (Configure → graph button): every attribute as a
+    node, edges show which formulas reference which attributes. Drag
+    `out → deps` to rewire a formula, Del on an edge to unlink,
+    double-click a node to open its formula canvas. Cycle-safe.
+  - **Batch edit**: select multiple DCs → a shared-parameter section
+    appears (`<mixed>` = values differ). Typed values are type-checked —
+    numeric fields reject text, lists reject non-options, with
+    descriptive errors; `10cm`/`18"` literals convert correctly.
 - *Extensions → Open DC → Interact Tool* — click a DC to run its `onClick`
   formula (works on nested children: the click bubbles up to the first
   ancestor with `onClick`, like the classic Interact tool). Supports
@@ -66,11 +88,19 @@ Requires **SketchUp 2024+** (Windows/Mac).
 attr  parent!attr  name!attr  global!attr   # references
 IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
 SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
-LARGEST SMALLEST OPTIONINDEX OPTIONVALUE
+LARGEST SMALLEST OPTIONINDEX OPTIONVALUE NEAREST
 ```
 
 `global!` parameters live on the model itself — set them via the console or
 future UI: `Sketchup.active_model.set_attribute("open_dc", "height", 100)`.
+
+## Compatibility
+
+Verified against a real-world library of 24 classic DCs (nested structures,
+19-option lists, `NEAREST`, `parent!`/`node!` refs): attributes read in
+original order, formulas parse, evaluation matches classic output.
+Degenerate values that crash the classic engine (zero-length scales →
+singular transforms) are clamped and flagged instead of raising.
 
 ## Repo layout
 
