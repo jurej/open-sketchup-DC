@@ -108,7 +108,7 @@
       border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
       margin: 0; box-shadow: 0 8px 20px rgba(0,0,0,.55); z-index: 30;
       font-family: ui-monospace, Consolas, monospace;
-      max-height: min(420px, calc(100vh - 60px)); overflow-y: auto;
+      overflow: visible;
     }
     #rete .context-menu .item {
       color: var(--fg); background: transparent; border: 0;
@@ -130,9 +130,20 @@
     #rete .context-menu .subitems {
       background: var(--bg3); border: 1px solid var(--border);
       border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
-      padding: 3px 0;
-      max-height: min(400px, calc(100vh - 80px)); overflow-y: auto;
-      min-width: 150px;
+      padding: 3px 0; min-width: 150px;
+      max-height: min(340px, calc(100vh - 80px));
+      overflow-y: auto; overflow-x: hidden;
+    }
+    /* slim dark scrollbars inside menus */
+    #rete .context-menu .subitems::-webkit-scrollbar { width: 8px; }
+    #rete .context-menu .subitems::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #rete .context-menu .subitems::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 4px;
+    }
+    #rete .context-menu .subitems::-webkit-scrollbar-thumb:hover {
+      background: var(--muted);
     }
     #ntoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
