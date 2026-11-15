@@ -380,6 +380,7 @@ module OpenSketchupDC
           ["DEGREES(rad) / RADIANS(deg)", "angle conversion"],
           ["PI()", "3.14159..."],
           ["LARGEST / SMALLEST(list, k)", "k-th largest / smallest value"],
+          ["NEAREST(x, v1, v2, ...)", "the listed value closest to x"],
           ["OPTIONINDEX(\"name\")", "index of the selected LIST option"],
           ["OPTIONVALUE(\"name\", \"label\")", "value mapped to a LIST option label"]
         ]],

@@ -277,7 +277,7 @@ module OpenSketchupDC
       # function names before the formula is stored).
       FUNCTIONS = %w[IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
                      SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
-                     LARGEST SMALLEST OPTIONINDEX OPTIONVALUE].freeze
+                     LARGEST SMALLEST NEAREST OPTIONINDEX OPTIONVALUE].freeze
 
       class Evaluator
         # DC action functions (side effects). Handled via ctx[:fx] - a pure
@@ -391,6 +391,12 @@ module OpenSketchupDC
             k = num(eval_node(args[-1])).to_i
             vals = args[0..-2].map { |a| num(eval_node(a)) }.sort
             fn == "LARGEST" ? vals[-k] : vals[k - 1]
+          when "NEAREST"
+            raise Error, "NEAREST needs >= 2 arguments" if args.length < 2
+
+            target = num(eval_node(args[0]))
+            args[1..].map { |a| num(eval_node(a)) }
+                     .min_by { |v| (v - target).abs }
           when "OPTIONINDEX"
             an = arg_str(args[0])
             opts = option_list(an)

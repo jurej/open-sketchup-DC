@@ -88,6 +88,102 @@
                  "<=", ">=", "AND", "OR"];
   var UN_OPS = ["-", "+", "NOT"];
 
+  // ---- node template ---------------------------------------------------
+  // Replaces vue-render's default node: title = VALUE (NEAREST, lenx, +),
+  // kind label = type, friendly arg names, "result" badge on the root.
+  var KIND_LABEL = {
+    const: "literal", attr: "attribute", ref: "reference",
+    bin: "operator", un: "operator", call: "function", act: "action"
+  };
+  var ARG_NAMES = {
+    IF: ["cond", "then", "else"],
+    CHOOSE: ["i"],
+    CURRENT: ["attr"],
+    OPTIONINDEX: ["attr"],
+    OPTIONVALUE: ["attr", "label"],
+    ROUND: ["x", "ndigits"],
+    NEAREST: ["x"],
+    SET: ["attr"], ANIMATE: ["attr"], ANIMATESLOW: ["attr"],
+    ANIMATEFAST: ["attr"], ANIMATECUSTOM: ["attr", "duration"]
+  };
+
+  function portName(input, node) {
+    var t = node.data.t;
+    if (t === "bin") return input.key;            // a / b
+    if (t === "un") return "x";
+    if (t === "call" || t === "act") {
+      var idx = parseInt(input.key.slice(3), 10) || 0;
+      var fn = String(node.data.v || "").toUpperCase();
+      var names = ARG_NAMES[fn];
+      if (names && names[idx]) return names[idx];
+      if (/^(LARGEST|SMALLEST)$/.test(fn)) {
+        return idx === node.inputs.size - 1 ? "k" : "v" + (idx + 1);
+      }
+      if (names) return "v" + idx;   // vararg candidates after the fixed head
+      return "arg" + (idx + 1);
+    }
+    return input.key;
+  }
+
+  var socketDir = {
+    bind: function (el, binding, vnode) {
+      vnode.context.bindSocket(el, binding.arg, binding.value);
+    },
+    update: function (el, binding, vnode) {
+      vnode.context.bindSocket(el, binding.arg, binding.value);
+    }
+  };
+  var controlDir = {
+    bind: function (el, binding, vnode) {
+      if (binding.value) vnode.context.bindControl(el, binding.value);
+    }
+  };
+
+  var ODCNode = {
+    props: ["node", "editor", "bindSocket", "bindControl"],
+    directives: { socket: socketDir, control: controlDir },
+    template:
+      '<div class="node" :class="[selected(), node.data.t, {root: node.data.root}]">' +
+        '<div class="ntitle">' +
+          '<span class="nkind">{{kind}}</span>' +
+          '<span class="nname">{{display}}</span>' +
+        '</div>' +
+        '<div class="nbody">' +
+          '<div class="col ins">' +
+            '<div v-for="i in inputs()" :key="i.key" class="port">' +
+              '<div v-socket:input="i" class="sock"></div>' +
+              '<div class="ptitle">{{portLabel(i)}}</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="col ctrls">' +
+            '<div v-for="c in controls()" :key="c.key" v-control="c" class="control"></div>' +
+          '</div>' +
+          '<div class="col outs">' +
+            '<div v-for="o in outputs()" :key="o.key" class="port out">' +
+              '<div v-socket:output="o" class="sock"></div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="rbadge" v-if="node.data.root">result</div>' +
+      '</div>',
+    computed: {
+      kind: function () { return KIND_LABEL[this.node.data.t] || "node"; },
+      display: function () {
+        var v = this.node.data.v;
+        return v == null || v === "" ? "" : String(v);
+      }
+    },
+    methods: {
+      inputs: function () { return Array.from(this.node.inputs.values()); },
+      outputs: function () { return Array.from(this.node.outputs.values()); },
+      controls: function () { return Array.from(this.node.controls.values()); },
+      selected: function () {
+        return this.editor.selected.contains(this.node) ? "selected" : "";
+      },
+      portLabel: function (input) { return portName(input, this.node); }
+    }
+  };
+
   // ---- components -------------------------------------------------------
   function comp(name, build) {
     var c = new Rete.Component(name);
@@ -289,12 +385,13 @@
     container.innerHTML = "";
     editor = new Rete.NodeEditor("odc@0.1.0", container);
     editor.use(ConnectionPlugin.default);
-    editor.use(VueRenderPlugin.default);
+    editor.use(VueRenderPlugin.default, { component: ODCNode });
     editor.use(ContextMenuPlugin.default, { items: menuItems() });
     components.forEach(function (c) { editor.register(c); });
     window.__dbg = { editor: editor, comps: components };
 
     buildEditor(payload.graph || { nodes: {}, links: [] }).then(function () {
+      markRoots();
       editor.view.resize();
       editor.trigger("process");
       requestPreview();
@@ -304,9 +401,26 @@
       toast("graph build failed: " + (e && e.message || e), true);
     });
 
-    editor.on("connectioncreated connectionremoved noderemoved", requestPreview);
+    editor.on("connectioncreated connectionremoved noderemoved", function () {
+      markRoots();
+      requestPreview();
+    });
     requestPreview();
   };
+
+  // Exactly one node has no outgoing connections - that's the result.
+  function markRoots() {
+    if (!editor) return;
+    editor.nodes.forEach(function (n) {
+      var fed = Array.from(n.outputs.values())
+        .some(function (o) { return o.connections.length > 0; });
+      var root = !fed;
+      if (n.data.root !== root) {
+        n.data.root = root;
+        n.update();
+      }
+    });
+  }
 
   document.getElementById("napply").addEventListener("click", function () {
     if (state) send({ op: "apply", entityId: state.entityId, name: state.name,

@@ -42,9 +42,9 @@ module OpenSketchupDC
         "ASIN" => 1, "ACOS" => 1, "ATAN" => 1,
         "DEGREES" => 1, "RADIANS" => 1, "PI" => 0,
         "CHOOSE" => 2, "MIN" => 1, "MAX" => 1, "ROUND" => 1,
-        "LARGEST" => 2, "SMALLEST" => 2
+        "LARGEST" => 2, "SMALLEST" => 2, "NEAREST" => 2
       }.freeze
-      FN_VARARG = %w[CHOOSE MIN MAX ROUND LARGEST SMALLEST].freeze
+      FN_VARARG = %w[CHOOSE MIN MAX ROUND LARGEST SMALLEST NEAREST].freeze
 
       # ------------------------------------------------------------------
       # formula string / AST -> graph document

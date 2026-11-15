@@ -39,57 +39,68 @@
     #napply:disabled { opacity: .4; cursor: default; }
     #rete { position: absolute; inset: 38px 0 0 0; }
 
-    /* ---- Rete dark theme ---- */
+    /* ---- node theme (custom ODCNode template) ---- */
     .node {
-      background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 8px; min-width: 110px; padding-bottom: 6px;
+      position: relative; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; min-width: 96px;
       box-shadow: 0 2px 8px rgba(0,0,0,.35);
-    }
-    .node.selected { border-color: var(--accent); }
-    .node .title {
-      font-family: ui-monospace, Consolas, monospace; font-size: 11px;
-      padding: 5px 10px; border-bottom: 1px solid var(--border);
-      color: var(--accent); background: rgba(79,156,249,.08);
-      border-radius: 8px 8px 0 0; text-align: center;
-    }
-    .node.const .title { color: var(--warn); background: rgba(230,150,100,.08); }
-    .node.call .title { color: var(--fn); background: rgba(185,165,240,.08); }
-    .node.ref .title  { color: var(--accent2); background: rgba(127,208,162,.08); }
-    .node.act .title  { color: var(--warn); }
-    .node .content { padding: 4px 0; }
-    .node .socket {
-      width: 12px; height: 12px; border-radius: 6px;
-      background: var(--bg); border: 2px solid var(--muted);
-      display: inline-block; margin: 4px -6px; vertical-align: middle;
-    }
-    .node .socket:hover, .node .socket.used { border-color: var(--accent2);
-      background: var(--accent2); }
-    .node .input-title, .node .output-title {
-      font-size: 10px; color: var(--muted); padding: 0 8px;
       font-family: ui-monospace, Consolas, monospace;
     }
-    .node .output { text-align: right; }
-    .node .input { text-align: left; }
-    .node input[type=text], .node input[type=number] {
-      width: 70px; background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 2px 5px;
-      font: 11px ui-monospace, Consolas, monospace; margin: 0 8px;
+    .node.selected { border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0,0,0,.35); }
+    .node.root { border-color: var(--accent2); }
+    .ntitle {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 8px; padding: 3px 7px; border-bottom: 1px solid var(--border);
+      border-radius: 6px 6px 0 0; background: rgba(79,156,249,.07);
     }
-    .node .nval {
-      padding: 3px 10px; font: 12px ui-monospace, Consolas, monospace;
-      color: var(--fg); text-align: center; word-break: break-all;
+    .node.const .ntitle { background: rgba(230,150,100,.07); }
+    .node.call  .ntitle { background: rgba(185,165,240,.07); }
+    .node.ref   .ntitle { background: rgba(127,208,162,.07); }
+    .nkind { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
+      color: var(--muted); }
+    .nname { font-size: 12px; font-weight: 600; color: var(--fg); }
+    .node.attr  .nname { color: var(--accent); }
+    .node.call  .nname { color: var(--fn); }
+    .node.const .nname { color: var(--warn); }
+    .node.ref   .nname { color: var(--accent2); }
+    .node.act   .nname { color: var(--warn); }
+    .nbody { display: flex; padding: 2px 0; }
+    .col { display: flex; flex-direction: column; }
+    .col.ins  { align-items: flex-start; }
+    .col.ctrls { flex: 1; align-items: center; justify-content: center; }
+    .col.outs { align-items: flex-end; margin-left: auto; }
+    .port { display: flex; align-items: center; gap: 4px; }
+    .ptitle { font-size: 9px; color: var(--muted); padding-right: 2px; }
+    .sock {
+      width: 11px; height: 11px; border-radius: 6px; margin: 2px;
+      background: var(--bg); border: 2px solid var(--muted); cursor: pointer;
     }
+    .sock:hover, .sock.used { border-color: var(--accent2);
+      background: var(--accent2); }
+    .control { padding: 1px 6px; }
+    .node input[type=text] {
+      width: 58px; background: var(--bg2); border: 1px solid var(--border);
+      color: var(--fg); border-radius: 4px; padding: 1px 4px;
+      font: 11px ui-monospace, Consolas, monospace;
+    }
+    .node .nval { padding: 0; font-size: 11px; color: var(--dim); }
     .node .nops {
       background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 2px 4px;
-      font: 12px ui-monospace, Consolas, monospace; margin: 2px 8px;
+      color: var(--fg); border-radius: 4px; padding: 0 3px;
+      font: 11px ui-monospace, Consolas, monospace;
     }
     .node .addarg {
       background: none; border: 1px dashed var(--border); color: var(--muted);
-      border-radius: 4px; font-size: 11px; padding: 1px 8px; margin: 3px 8px;
-      cursor: pointer;
+      border-radius: 4px; font-size: 9px; padding: 0 6px; cursor: pointer;
     }
     .node .addarg:hover { color: var(--accent); border-color: var(--accent); }
+    .rbadge {
+      position: absolute; right: -6px; top: -8px;
+      background: var(--accent2); color: #101512;
+      font-size: 8px; font-weight: 700; letter-spacing: .05em;
+      text-transform: uppercase; padding: 1px 5px; border-radius: 4px;
+    }
     .connection path { stroke: var(--muted); stroke-width: 2; fill: none; }
     .connection .main-path { stroke: var(--muted); }
     .context-menu {
