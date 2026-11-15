@@ -396,6 +396,14 @@ window.OpenDC = (function () {
   var fxItems = []; // current suggestions {label, insert, kind}
   var fxRes = null; // caret context of the open suggestion list
 
+  // Function whitelist from the real parser (state.functions / .actions).
+  function fxFnKind(name) {
+    var up = name.toUpperCase();
+    if ((state.functions || []).indexOf(up) !== -1) return "fn";
+    if ((state.actions || []).indexOf(up) !== -1) return "act";
+    return null;
+  }
+
   function fxEntity(card) {
     var eid = card.getAttribute("data-eid");
     return (state.entities || []).find(function (x) { return x.entityId === eid; }) || { params: [] };
@@ -447,8 +455,11 @@ window.OpenDC = (function () {
         var tok = m[0];
         if (tok.indexOf("!") !== -1) {
           push("ref", tok.replace(/\s+/g, ""));
-        } else if (/^\s*\(/.test(src.slice(i + tok.length)) || FX_KEYWORDS[tok.toUpperCase()]) {
-          push("text", tok); // function name or keyword - plain text
+        } else if (/^\s*\(/.test(src.slice(i + tok.length))) {
+          var fk = fxFnKind(tok);
+          push(fk || "text", tok); // known function -> pill; unknown -> text (validation flags it)
+        } else if (FX_KEYWORDS[tok.toUpperCase()]) {
+          push("kw", tok);
         } else if (known[tok.toLowerCase()]) {
           push("attr", tok);
         } else {
@@ -468,6 +479,38 @@ window.OpenDC = (function () {
     fxTokens(src, known).forEach(function (seg) {
       ed.appendChild(seg.t === "text" ? document.createTextNode(seg.s) : fxPillEl(seg.t, seg.s));
     });
+  }
+
+  // Insert an element at the caret (or at the end when unfocused), then
+  // place the caret after it - or at `innerOffset` inside a trailing text
+  // node (function templates put the caret inside the parens).
+  function fxInsertAtCaret(ed, nodes, innerOffset) {
+    var last = nodes[nodes.length - 1];
+    var sel = window.getSelection();
+    if (sel.rangeCount && ed.contains(sel.anchorNode)) {
+      var r = sel.getRangeAt(0);
+      r.deleteContents();
+      nodes.forEach(function (n) { r.insertNode(n); });
+      if (innerOffset != null && last.nodeType === 3) {
+        r.setStart(last, innerOffset);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      } else {
+        fxCaretAfter(last);
+      }
+    } else {
+      nodes.forEach(function (n) { ed.appendChild(n); });
+    }
+    fxSync(ed);
+  }
+
+  // Split "NAME(args)" into a function pill + argument text so the caret
+  // lands inside the parens ready to type arguments.
+  function fxFnNodes(template) {
+    var p = template.indexOf("(");
+    var kind = fxFnKind(template.slice(0, p)) || "fn";
+    return [fxPillEl(kind, template.slice(0, p)), document.createTextNode(template.slice(p))];
   }
 
   function fxSerialize(ed) {
@@ -539,13 +582,13 @@ window.OpenDC = (function () {
     (state.globals || []).forEach(function (g) {
       items.push({ label: "global!" + g.name, insert: "global!" + g.name, kind: "glob" });
     });
-    FN_CHIPS.forEach(function (t) {
-      items.push({ label: t.replace(/\(.*/, "") + "()", insert: t, kind: "fn" });
+    (state.functions || []).forEach(function (n) {
+      items.push({ label: n + "()", insert: n + "(", kind: "fn" });
     });
     var box = ed.closest(".pedit");
     if (box && box.getAttribute("data-pedit") === "onclick") {
-      ACTION_CHIPS.forEach(function (t) {
-        items.push({ label: t.replace(/\(.*/, "") + "()", insert: t, kind: "act" });
+      (state.actions || []).forEach(function (n) {
+        items.push({ label: n + "()", insert: n + "(", kind: "act" });
       });
     }
     if ((e.params || []).some(function (p) { return p.name === "copies"; }))
@@ -610,32 +653,33 @@ window.OpenDC = (function () {
     r.setStart(res.node, res.upto.length - drop);
     r.setEnd(res.node, res.upto.length);
     r.deleteContents();
-    var node = (item.kind === "attr")
-      ? fxPillEl("attr", item.insert)
-      : (item.kind === "glob")
-        ? fxPillEl("ref", res.scope ? res.scope + "!" + item.insert : item.insert)
-        : document.createTextNode(item.insert);
-    r.insertNode(node);
-    fxCaretAfter(node);
+    if (item.kind === "fn" || item.kind === "act") {
+      var nodes = fxFnNodes(item.insert);
+      nodes.forEach(function (n) { r.insertNode(n); });
+      var tnode = nodes[nodes.length - 1];
+      var nr = document.createRange();
+      nr.setStart(tnode, 1); // caret just inside "(..." of the template
+      nr.collapse(true);
+      var sel2 = window.getSelection();
+      sel2.removeAllRanges();
+      sel2.addRange(nr);
+    } else {
+      var node = (item.kind === "attr")
+        ? fxPillEl("attr", item.insert)
+        : fxPillEl("ref", res.scope ? res.scope + "!" + item.insert : item.insert);
+      r.insertNode(node);
+      fxCaretAfter(node);
+    }
     fxSync(ed);
   }
 
   // Insert a palette chip at the caret (or at the end when unfocused).
-  // Names -> attr pills, "scope!name" -> ref pills, templates -> text.
+  // Names -> attr pills, "scope!name" -> ref pills, fn templates ->
+  // function pill + "(args" text with the caret inside the parens.
   function fxInsertToken(ed, ins) {
-    var node = /!/i.test(ins) ? fxPillEl("ref", ins)
-      : /[()]/.test(ins) ? document.createTextNode(ins)
-      : fxPillEl("attr", ins);
-    var sel = window.getSelection();
-    if (sel.rangeCount && ed.contains(sel.anchorNode)) {
-      var r = sel.getRangeAt(0);
-      r.deleteContents();
-      r.insertNode(node);
-      fxCaretAfter(node);
-    } else {
-      ed.appendChild(node);
-    }
-    fxSync(ed);
+    if (/[()]/.test(ins)) { fxInsertAtCaret(ed, fxFnNodes(ins), 1); return; }
+    var node = /!/i.test(ins) ? fxPillEl("ref", ins) : fxPillEl("attr", ins);
+    fxInsertAtCaret(ed, [node], null);
   }
 
   function fxKeyNav(ed, ev) {

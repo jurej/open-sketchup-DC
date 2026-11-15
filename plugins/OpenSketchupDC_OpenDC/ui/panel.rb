@@ -377,6 +377,8 @@ module OpenSketchupDC
         {
           "version" => VERSION,
           "dcAvailable" => DCBridge.available?,
+          "functions" => Expression::FUNCTIONS,
+          "actions" => Expression::Evaluator::ACTIONS,
           "globals" => global_params(model),
           "entities" => sets.each_with_index.map do |ps, i|
             h = ps.to_h
