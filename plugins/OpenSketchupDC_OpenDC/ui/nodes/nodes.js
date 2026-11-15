@@ -147,6 +147,10 @@
             '<div v-for="i in inputs()" :key="i.key" class="port">' +
               '<div v-socket:input="i" class="sock"></div>' +
               '<div class="ptitle">{{portLabel(i)}}</div>' +
+              '<input v-if="!i.connections.length" class="manval" type="text" ' +
+                ':value="manualVal(i)" @input="setManual(i, $event)" ' +
+                '@mousedown.stop @dblclick.stop @pointerdown.stop ' +
+                'placeholder="val"/>' +
             '</div>' +
           '</div>' +
           '<div class="col ctrls">' +
@@ -174,7 +178,15 @@
       selected: function () {
         return this.editor.selected.contains(this.node) ? "selected" : "";
       },
-      portLabel: function (input) { return portName(input, this.node); }
+      portLabel: function (input) { return portName(input, this.node); },
+      manualVal: function (input) {
+        return ((this.node.data.manual || {})[input.key]) || "";
+      },
+      setManual: function (input, e) {
+        var m = this.node.data.manual || (this.node.data.manual = {});
+        m[input.key] = e.target.value;
+        requestPreview();
+      }
     }
   };
 
@@ -239,10 +251,25 @@
   async function makeNode(type, v, extra) {
     var node = await components.find(function (c) {
       return c.name === TYPE2COMP[type];
-    }).createNode(Object.assign({ v: v }, extra || {}));
+    }).createNode(Object.assign({ v: v, manual: {} }, extra || {}));
     node.data.t = type;
     node.name = type;
     return node;
+  }
+
+  // Manual port values: "abc" -> str abc, 12.5 -> num, bare word -> str.
+  function parseLit(raw) {
+    var s = String(raw).trim();
+    if (s.length > 1 && s[0] === '"' && s[s.length - 1] === '"')
+      return { v: s.slice(1, -1), k: "str" };
+    if (/^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s))
+      return { v: s, k: "num" };
+    return { v: s, k: "str" };
+  }
+  // Display form for a const value collapsed into a port field:
+  // strings stay quoted so the type round-trips unambiguously.
+  function litDisplay(v, k) {
+    return k === "str" ? '"' + v + '"' : String(v);
   }
 
   // ---- graph doc <-> rete ------------------------------------------------
@@ -265,12 +292,27 @@
   async function buildEditor(doc) {
     var depth = layoutDepth(doc);
     var perLevel = {}, idMap = {};
+    // A const node feeding exactly one port collapses into that port's
+    // manual-value field. Multi-use consts stay visible (shared value).
+    var useCnt = {}, collapsed = {}, manual = {};
+    (doc.links || []).forEach(function (l) {
+      useCnt[l.f] = (useCnt[l.f] || 0) + 1;
+    });
+    (doc.links || []).forEach(function (l) {
+      var src = doc.nodes[l.f];
+      if (src && src.t === "const" && useCnt[l.f] === 1 && doc.nodes[l.t]) {
+        collapsed[l.f] = true;
+        (manual[l.t] = manual[l.t] || {})[l.p] = litDisplay(src.v, src.k);
+      }
+    });
     for (var id of Object.keys(doc.nodes)) {
+      if (collapsed[id]) continue;
       var n = doc.nodes[id];
       var argc = (n.t === "call" || n.t === "act")
         ? doc.links.filter(function (l) { return l.t === id; }).length
         : undefined;
       var node = await makeNode(n.t, n.v, { k: n.k, argc: argc });
+      node.data.manual = manual[id] || {};
       var lv = depth[id] || 0;
       perLevel[lv] = (perLevel[lv] || 0) + 1;
       node.position = [60 + lv * 190, 40 + (perLevel[lv] - 1) * 110];
@@ -278,6 +320,7 @@
       idMap[id] = node;
     }
     doc.links.forEach(function (l) {
+      if (collapsed[l.f]) return;
       var src = idMap[l.f], dst = idMap[l.t];
       if (src && dst) editor.connect(src.outputs.get("out"), dst.inputs.get(l.p));
     });
@@ -295,6 +338,22 @@
           links.push({ f: id, t: String(c.node), p: c.input });
           fed[id] = true;
         });
+      });
+    });
+    // Typed port values become a synthesized const node + link, keeping
+    // the doc schema and the Ruby emitter unchanged.
+    editor.nodes.forEach(function (n) {
+      var man = n.data.manual || {};
+      Object.keys(man).forEach(function (pk) {
+        var inp = n.inputs.get(pk);
+        if (!inp || inp.connections.length) return;
+        var raw = String(man[pk]).trim();
+        if (!raw) return;
+        var lit = parseLit(raw);
+        var mid = "m" + n.id + "_" + pk;
+        nodes[mid] = { t: "const", v: lit.v, k: lit.k };
+        links.push({ f: mid, t: String(n.id), p: pk });
+        fed[mid] = true;
       });
     });
     var roots = Object.keys(nodes).filter(function (id) { return !fed[id]; });
@@ -410,6 +469,8 @@
     });
 
     editor.on("connectioncreated connectionremoved noderemoved", function () {
+      // re-render ports so manual fields hide/show on (dis)connect
+      editor.nodes.forEach(function (n) { if (n.update) n.update(); });
       markRoots();
       requestPreview();
     });

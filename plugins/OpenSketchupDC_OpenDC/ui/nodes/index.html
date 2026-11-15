@@ -72,6 +72,14 @@
     .col.outs { align-items: flex-end; margin-left: auto; }
     .port { display: flex; align-items: center; gap: 4px; }
     .ptitle { font-size: 9px; color: var(--muted); padding-right: 2px; }
+    .manval {
+      width: 52px; margin-left: 3px; padding: 1px 4px; font-size: 9.5px;
+      font-family: inherit; color: var(--fg);
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 3px; outline: none;
+    }
+    .manval:focus { border-color: var(--accent); }
+    .manval::placeholder { color: var(--muted); opacity: .55; }
     .sock {
       width: 11px; height: 11px; border-radius: 6px; margin: 2px;
       background: var(--bg); border: 2px solid var(--muted); cursor: pointer;
@@ -170,10 +178,10 @@
   </header>
   <div id="rete"></div>
   <div id="ntoast"></div>
-  <script src="vendor/vue.min.js"></script>
-  <script src="vendor/rete.min.js"></script>
-  <script src="vendor/connection-plugin.min.js"></script>
-  <script src="vendor/vue-render-plugin.min.js"></script>
+  <script src="../vendor/vue.min.js"></script>
+  <script src="../vendor/rete.min.js"></script>
+  <script src="../vendor/connection-plugin.min.js"></script>
+  <script src="../vendor/vue-render-plugin.min.js"></script>
   <script>
     // Minimal lodash stub — context-menu-plugin UMD expects window._
     // and only uses debounce()/isFunction().
@@ -191,7 +199,7 @@
       isFunction: function (v) { return typeof v === 'function'; }
     };
   </script>
-  <script src="vendor/context-menu-plugin.min.js"></script>
+  <script src="../vendor/context-menu-plugin.min.js"></script>
   <script src="nodes.js"></script>
 </body>
 </html>
