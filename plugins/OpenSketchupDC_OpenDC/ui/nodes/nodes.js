@@ -402,6 +402,21 @@
       markRoots();
       requestPreview();
     });
+
+    // Blue-highlight connections into/out of the selected node(s).
+    function markSelectedConns() {
+      var sel = editor.selected.list;
+      editor.view.connections.forEach(function (cv) {
+        var c = cv.connection;
+        var lit = sel.some(function (n) {
+          return c.input.node === n || c.output.node === n;
+        });
+        if (cv.el) cv.el.classList.toggle("lit", lit);
+      });
+    }
+    editor.on("nodeselected", markSelectedConns);
+    editor.on("connectioncreated connectionremoved", markSelectedConns);
+
     requestPreview();
   };
 
