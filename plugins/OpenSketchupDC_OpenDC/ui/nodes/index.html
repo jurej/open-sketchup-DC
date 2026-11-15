@@ -48,7 +48,10 @@
     }
     .node.selected { border-color: var(--accent);
       box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0,0,0,.35); }
-    .node.root { border-color: var(--accent2); }
+    /* FORMULA output node - the graph's single fixed result */
+    .node.res { border-color: var(--accent2); }
+    .node.res .ntitle { background: rgba(127,208,162,.10); }
+    .node.res .nname { color: var(--accent2); }
     .ntitle {
       display: flex; justify-content: space-between; align-items: baseline;
       gap: 8px; padding: 3px 7px; border-bottom: 1px solid var(--border);
@@ -102,12 +105,6 @@
       border-radius: 4px; font-size: 9px; padding: 0 6px; cursor: pointer;
     }
     .node .addarg:hover { color: var(--accent); border-color: var(--accent); }
-    .rbadge {
-      position: absolute; right: -6px; top: -8px;
-      background: var(--accent2); color: #101512;
-      font-size: 8px; font-weight: 700; letter-spacing: .05em;
-      text-transform: uppercase; padding: 1px 5px; border-radius: 4px;
-    }
     #rete .connection path { stroke: var(--muted); stroke-width: 1.5;
       fill: none; }
     #rete .connection .main-path { stroke: var(--muted); stroke-width: 1.5; }

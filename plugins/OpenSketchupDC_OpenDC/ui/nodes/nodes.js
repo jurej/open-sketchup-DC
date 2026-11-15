@@ -87,7 +87,8 @@
   // kind label = type, friendly arg names, "result" badge on the root.
   var KIND_LABEL = {
     const: "literal", attr: "attribute", ref: "reference",
-    bin: "operator", un: "operator", call: "function", act: "action"
+    bin: "operator", un: "operator", call: "function", act: "action",
+    res: "output"
   };
   var ARG_NAMES = {
     IF: ["cond", "then", "else"],
@@ -137,7 +138,7 @@
     props: ["node", "editor", "bindSocket", "bindControl"],
     directives: { socket: socketDir, control: controlDir },
     template:
-      '<div class="node" :class="[selected(), node.data.t, {root: node.data.root}]">' +
+      '<div class="node" :class="[selected(), node.data.t]">' +
         '<div class="ntitle">' +
           '<span class="nkind">{{kind}}</span>' +
           '<span class="nname">{{display}}</span>' +
@@ -162,11 +163,11 @@
             '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="rbadge" v-if="node.data.root">result</div>' +
       '</div>',
     computed: {
       kind: function () { return KIND_LABEL[this.node.data.t] || "node"; },
       display: function () {
+        if (this.node.data.t === "res") return "FORMULA";
         var v = this.node.data.v;
         return v == null || v === "" ? "" : String(v);
       }
@@ -239,11 +240,17 @@
       }
       n.addControl(ctrl("addarg", AddArgBtn, { node: n }));
       n.addOutput(new Rete.Output("out", "value", socketVal));
+    }),
+    // The single FORMULA output node - whatever is wired into it is the
+    // expression's result. Always present, not deletable, single-conn.
+    comp("res", function (n) {
+      n.addInput(new Rete.Input("in", "in", socketVal, false));
     })
   ];
 
   var TYPE2COMP = { const: "const", attr: "attr", ref: "ref",
-                    bin: "bin", un: "un", call: "call", act: "act" };
+                    bin: "bin", un: "un", call: "call", act: "act",
+                    res: "res" };
 
   // node.name doubles as the CSS class and the title in vue-render, so it
   // carries the node TYPE (attr/const/call...); the value is shown by the
@@ -324,24 +331,47 @@
       var src = idMap[l.f], dst = idMap[l.t];
       if (src && dst) editor.connect(src.outputs.get("out"), dst.inputs.get(l.p));
     });
+    // FORMULA output node: always present, docked right of the doc root
+    // (or top-left on an empty graph) and wired to it.
+    var resNode = await makeNode("res", null);
+    var rootNode = doc.root ? idMap[doc.root] : null;
+    if (rootNode) {
+      resNode.position = [rootNode.position[0] + 190, rootNode.position[1]];
+    } else {
+      var lvMax = Object.keys(depth).reduce(function (m, id) {
+        return Math.max(m, depth[id]);
+      }, -1);
+      resNode.position = [60 + (lvMax + 1) * 190, 40];
+    }
+    editor.addNode(resNode);
+    if (rootNode) editor.connect(rootNode.outputs.get("out"), resNode.inputs.get("in"));
   }
 
   function graphDoc() {
     var d = editor.toJSON();
-    var nodes = {}, links = [], fed = {};
+    // The FORMULA node is UI-only: it is stripped from the doc and the
+    // node wired into its input becomes the emitted root.
+    var resNode = editor.nodes.find(function (n) { return n.data.t === "res"; });
+    var resId = resNode ? String(resNode.id) : null;
+    var nodes = {}, links = [], root = null;
     Object.keys(d.nodes).forEach(function (id) {
+      if (resId && String(id) === resId) return;
       var n = d.nodes[id];
       var t = n.data.t === "act" ? "call" : (n.data.t || n.name);
       nodes[id] = { t: t, v: n.data.v, k: n.data.k };
       Object.keys(n.outputs).forEach(function (ok) {
         (n.outputs[ok].connections || []).forEach(function (c) {
-          links.push({ f: id, t: String(c.node), p: c.input });
-          fed[id] = true;
+          if (resId && String(c.node) === resId) {
+            root = id;           // this node's output feeds FORMULA
+          } else {
+            links.push({ f: id, t: String(c.node), p: c.input });
+          }
         });
       });
     });
     // Typed port values become a synthesized const node + link, keeping
-    // the doc schema and the Ruby emitter unchanged.
+    // the doc schema and the Ruby emitter unchanged. A value typed into
+    // the FORMULA input itself is a literal result (e.g. `42`).
     editor.nodes.forEach(function (n) {
       var man = n.data.manual || {};
       Object.keys(man).forEach(function (pk) {
@@ -352,12 +382,14 @@
         var lit = parseLit(raw);
         var mid = "m" + n.id + "_" + pk;
         nodes[mid] = { t: "const", v: lit.v, k: lit.k };
-        links.push({ f: mid, t: String(n.id), p: pk });
-        fed[mid] = true;
+        if (resNode && String(n.id) === resId) {
+          if (!root) root = mid;
+        } else {
+          links.push({ f: mid, t: String(n.id), p: pk });
+        }
       });
     });
-    var roots = Object.keys(nodes).filter(function (id) { return !fed[id]; });
-    return { nodes: nodes, links: links, root: rootId ? String(rootId) : roots[0] };
+    return { nodes: nodes, links: links, root: root };
   }
 
   // ---- preview / apply ---------------------------------------------------
@@ -369,6 +401,16 @@
     if (!state) return;
     clearTimeout(previewTimer);
     previewTimer = setTimeout(function () {
+      // Nothing wired into FORMULA -> there is no result to emit.
+      var res = resNode();
+      var wired = res && res.inputs.get("in") &&
+                  res.inputs.get("in").connections.length;
+      var man = res && String((res.data.manual || {})["in"] || "").trim();
+      if (res && !wired && !man) {
+        window.onNodeStatus({ ok: false,
+          errors: ["connect an expression to FORMULA"] });
+        return;
+      }
       send({ op: "preview", entityId: state.entityId, name: state.name,
              doc: graphDoc() });
     }, 250);
@@ -397,7 +439,6 @@
     return function () {
       return makeNode(type, v, extra).then(function (n) {
         editor.addNode(n);
-        markRoots();
         requestPreview();
       }).catch(function (err) {
         toast("add failed: " + err.message, true);
@@ -455,10 +496,9 @@
       delay: 120
     });
     components.forEach(function (c) { editor.register(c); });
-    window.__dbg = { editor: editor, comps: components, markRoots: markRoots };
+    window.__dbg = { editor: editor, comps: components };
 
     buildEditor(payload.graph || { nodes: {}, links: [] }).then(function () {
-      markRoots();
       editor.view.resize();
       editor.trigger("process");
       requestPreview();
@@ -471,7 +511,6 @@
     editor.on("connectioncreated connectionremoved noderemoved nodecreated", function () {
       // re-render ports so manual fields hide/show on (dis)connect
       editor.nodes.forEach(function (n) { if (n.update) n.update(); });
-      markRoots();
       requestPreview();
     });
 
@@ -492,66 +531,10 @@
     requestPreview();
   };
 
-  // Exactly one node is the result - the root the formula is emitted
-  // from. Other sinks (disconnected fragments, freshly added nodes)
-  // are NOT results. Tracked as a stable rootId: kept while still a
-  // sink, followed downstream when wired into another node, and
-  // re-picked (largest upstream tree) when deleted.
-  var rootId = null;
-
-  function isSink(n) {
-    return !Array.from(n.outputs.values())
-      .some(function (o) { return o.connections.length > 0; });
-  }
-
-  function downstreamSink(n) {
-    var seen = {};
-    while (n && !seen[n.id]) {
-      seen[n.id] = true;
-      if (isSink(n)) return n;
-      var nxt = null;
-      n.outputs.forEach(function (o) {
-        if (!nxt && o.connections.length) nxt = o.connections[0].input.node;
-      });
-      n = nxt;
-    }
-    return null;
-  }
-
-  function upstreamCount(n) {
-    var seen = {};
-    (function walk(m) {
-      m.inputs.forEach(function (i) {
-        i.connections.forEach(function (c) {
-          var src = c.output.node;
-          if (!seen[src.id]) { seen[src.id] = true; walk(src); }
-        });
-      });
-    })(n);
-    return Object.keys(seen).length;
-  }
-
-  function markRoots() {
-    if (!editor) return;
-    var sinks = editor.nodes.filter(isSink);
-    var root = editor.nodes.find(function (n) { return String(n.id) === String(rootId); });
-    if (root && !isSink(root)) root = downstreamSink(root);
-    if (!root || !isSink(root)) {
-      root = null;
-      var best = -1;
-      sinks.forEach(function (s) {
-        var c = upstreamCount(s);
-        if (c > best) { best = c; root = s; }
-      });
-    }
-    rootId = root ? root.id : null;
-    editor.nodes.forEach(function (n) {
-      var isRoot = !!root && n.id === root.id;
-      if (!!n.data.root !== isRoot) {
-        n.data.root = isRoot || undefined;
-        n.update();
-      }
-    });
+  // The FORMULA output node can't be deleted or recreated - it is the
+  // fixed result. The result switches by simply rewiring its input.
+  function resNode() {
+    return editor && editor.nodes.find(function (n) { return n.data.t === "res"; });
   }
 
   document.getElementById("napply").addEventListener("click", function () {
@@ -562,7 +545,9 @@
   document.addEventListener("keydown", function (ev) {
     if ((ev.key === "Delete" || ev.key === "Backspace") && editor &&
         editor.selected.list.length) {
-      editor.selected.list.slice().forEach(function (n) { editor.removeNode(n); });
+      editor.selected.list.slice().forEach(function (n) {
+        if (n.data.t !== "res") editor.removeNode(n);  // FORMULA is fixed
+      });
       editor.selected.clear();
       requestPreview();
     }
