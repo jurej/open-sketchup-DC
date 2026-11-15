@@ -27,6 +27,13 @@ module OpenSketchupDC
 
       Token = Struct.new(:type, :value)
 
+      # Human-readable names so parse errors can name what was found.
+      TOKEN_NAMES = {
+        rparen: "')'", lparen: "'('", comma: "','", bang: "'!'",
+        op: "an operator", ident: "a name", num: "a number",
+        str: "a string", eof: "end of input"
+      }.freeze
+
       LENGTH_UNITS = {
         "mm" => 1.0 / 25.4, "cm" => 1.0 / 2.54, "m" => 100.0 / 2.54,
         "in" => 1.0, '"' => 1.0, "ft" => 12.0, "'" => 12.0,
@@ -34,6 +41,14 @@ module OpenSketchupDC
       }.freeze
 
       module_function
+
+      def describe_token(t)
+        t.type == :eof ? "end of input" : "'#{t.value}'"
+      end
+
+      def describe_type(type)
+        TOKEN_NAMES[type] || type.to_s
+      end
 
       # ------------------------------------------------------------------
       # Lexer
@@ -136,7 +151,9 @@ module OpenSketchupDC
 
         def parse
           ast = expr
-          raise Error, "trailing tokens" unless peek.type == :eof
+          unless peek.type == :eof
+            raise Error, "unexpected #{Expression.describe_token(peek)}"
+          end
 
           ast
         end
@@ -153,7 +170,10 @@ module OpenSketchupDC
 
         def expect(type)
           t = next!
-          raise Error, "expected #{type}, got #{t.type}" unless t.type == type
+          unless t.type == type
+            raise Error, "expected #{Expression.describe_type(type)} " \
+                         "but found #{Expression.describe_token(t)}"
+          end
 
           t
         end
@@ -225,7 +245,7 @@ module OpenSketchupDC
             expect(:rparen)
             e
           else
-            raise Error, "unexpected #{t.type} '#{t.value}'"
+            raise Error, "unexpected #{Expression.describe_token(t)}"
           end
         end
 
@@ -234,7 +254,9 @@ module OpenSketchupDC
           if peek.type == :bang
             next!
             n2 = next!
-            raise Error, "expected attribute after !" unless n2.type == :ident
+            unless n2.type == :ident
+              raise Error, "expected an attribute name after '#{name}!'"
+            end
 
             return [:ref, name.downcase, n2.value.downcase]
           end

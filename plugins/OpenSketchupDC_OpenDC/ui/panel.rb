@@ -134,6 +134,11 @@ module OpenSketchupDC
       def cmd_set_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
+          err = validate_value(e, p["name"], p["value"], dict_name)
+          if err
+            push_error(err)
+            next
+          end
           value = coerce_value(p["value"], param_units(e, p["name"]), dict_name,
                                param_formulaunits(e, p["name"]))
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set #{p['name']}") do
@@ -147,6 +152,11 @@ module OpenSketchupDC
       def cmd_set_default(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
+          err = validate_value(e, p["name"], p["value"], dict_name)
+          if err
+            push_error(err)
+            next
+          end
           # the literal <name> slot stores inches (engine units), unlike the
           # formula slot which evals in _<name>_formulaunits
           value = coerce_value(p["value"], param_units(e, p["name"]), dict_name, "INCHES")
@@ -250,6 +260,12 @@ module OpenSketchupDC
 
         name = p["name"]
         model = Sketchup.active_model
+        # Type-check per entity before writing anything - a bad value on
+        # one component shouldn't leave the rest half-updated.
+        entities.each do |e|
+          err = validate_value(e, name, p["value"], DCReader.dict_name_for(e))
+          return push_error("#{entity_label(e)}: #{err}") if err
+        end
         classic = []
         Helpers.undo_wrap(model, "Open DC: Batch set #{name}") do
           entities.each do |e|
@@ -298,7 +314,9 @@ module OpenSketchupDC
         begin
           ast = Expression.parse(Expression.strip_eq(src))
         rescue Expression::Error => e
-          return { "ok" => false, "errors" => ["syntax: #{e.message}"], "hints" => hints }
+          return { "ok" => false,
+                   "errors" => [friendly_syntax_error(src, e.message)],
+                   "hints" => hints }
         end
 
         Expression.walk(ast) do |node|
@@ -341,6 +359,115 @@ module OpenSketchupDC
         { "ok" => errors.empty?, "errors" => errors.uniq, "hints" => hints.uniq }
       end
 
+      # Units whose values must parse as numbers (length, angle, plain
+      # numeric). STRING/TEXT/BOOLEAN are handled separately.
+      NUMERIC_UNITS = (Param::LENGTH_UNITS +
+                       %w[DEGREES RADIANS DECIMAL FLOAT PERCENT INTEGER]).freeze
+
+      # Typed suffixes on value literals -> the DC unit they express
+      # (10cm, 2", 3', 45deg). Mirrors the formula lexer's unit set.
+      VALUE_SUFFIX_UNITS = {
+        "mm" => "MILLIMETERS", "cm" => "CENTIMETERS", "m" => "METERS",
+        "in" => "INCHES", '"' => "INCHES",
+        "ft" => "FEET", "'" => "FEET",
+        "deg" => "DEGREES", "degrees" => "DEGREES"
+      }.freeze
+
+      # Turn a raw parser message into something a non-programmer can act
+      # on. "trailing tokens" tells you nothing; "wrap it in quotes" does.
+      def friendly_syntax_error(src, msg)
+        s = src.to_s.strip
+        case msg
+        when /\Aunexpected '(.+)'\z/
+          tok = Regexp.last_match(1)
+          if s =~ /\A[A-Za-z_][\w.]*(\s+[A-Za-z_][\w.]*)+\z/
+            # bare words like `Valles GAL2` - almost surely meant as text
+            "'#{s}' looks like a text value - " \
+              "wrap it in double quotes: \"#{s}\""
+          elsif tok == ")"
+            "extra ')' - there is no '(' matching it"
+          else
+            "unexpected '#{tok}' - an operator (+ - * / &) or a bracket " \
+              "may be missing before it"
+          end
+        when "unexpected end of input"
+          "the formula ends abruptly - it looks incomplete"
+        when /\Aexpected (.+) but found (.+)\z/
+          "expected #{Regexp.last_match(1)} but found #{Regexp.last_match(2)}"
+        when "unterminated string"
+          'the text never closes - add the missing "'
+        when /\Aunexpected character '(.+)'\z/
+          "'#{Regexp.last_match(1)}' can't be used in a formula"
+        when /\Abad number at (\d+)\z/
+          "malformed number near character #{Regexp.last_match(1).to_i + 1}"
+        when /\Aunknown unit '(.+)'\z/
+          "unknown unit '#{Regexp.last_match(1)}' - " \
+            "use mm, cm, m, in/\", ft/' or deg"
+        when /\Aexpected an attribute name after '(.+)!'\z/
+          "'#{Regexp.last_match(1)}!' needs an attribute after it, " \
+            "e.g. #{Regexp.last_match(1)}!name"
+        else
+          msg
+        end
+      end
+
+      # Parse a UI-entered value as a plain number or a unit-suffixed
+      # literal (450, -2.5, 10cm, 18", 3', 45deg).
+      # Returns [number, suffix_unit|nil] or nil.
+      def value_literal(s)
+        return [s.to_f, nil] if s =~ /\A-?\d+(\.\d+)?\z/
+
+        m = s.match(/\A(-?\d+(?:\.\d+)?)(mm|cm|m|in|ft|deg|degrees|"|')\z/i)
+        m ? [m[1].to_f, VALUE_SUFFIX_UNITS[m[2].downcase]] : nil
+      end
+
+      # Type-check a UI-entered value against the param's declared type
+      # before it is written. Returns a user-facing error string or nil.
+      def validate_value(entity, name, raw, dict_name)
+        param = DCReader.read(entity, dict_name: dict_name)[name]
+        return nil if param.nil?
+
+        s = raw.to_s.strip
+        return nil if s.empty?
+
+        types = [param.units, param.formulaunits].map { |u| u.to_s.upcase }
+        label = param.display_name
+
+        if types.include?("BOOLEAN") && s !~ /\A(true|false|0|1)\z/i
+          return "#{label} expects true or false - '#{s}' isn't valid"
+        end
+
+        if param.list? && param.parsed_options.any?
+          opts = param.parsed_options
+          unless opts.any? { |o| o["value"] == s || o["label"] == s }
+            names = opts.map { |o| o["label"] }.first(6).join(", ")
+            names += ", ..." if opts.length > 6
+            return "#{label} is a list - '#{s}' isn't one of its " \
+                   "options (#{names})"
+          end
+          return nil
+        end
+
+        return nil unless (types & NUMERIC_UNITS).any?
+
+        lit = value_literal(s)
+        if lit.nil?
+          return "#{label} expects a number - '#{s}' isn't one " \
+                 "(examples: 450, 45.5, 10cm, 18\")"
+        end
+        num, suffix = lit
+        if types.include?("INTEGER") && num != num.to_i
+          return "#{label} expects a whole number - '#{s}' isn't"
+        end
+        if suffix == "DEGREES" && (types & Param::LENGTH_UNITS).any?
+          return "#{label} is a length - 'deg' is an angle unit"
+        end
+        if suffix && suffix != "DEGREES" && (types & Param::LENGTH_UNITS).empty?
+          return "#{label} isn't a length field - '#{s}' carries one"
+        end
+        nil
+      end
+
       def top_level?(entity)
         entity.parent.is_a?(Sketchup::Model)
       rescue StandardError
@@ -357,16 +484,24 @@ module OpenSketchupDC
         return v if v.is_a?(Numeric) || v == true || v == false
 
         s = v.to_s.strip
-        if s =~ /\A-?\d+(\.\d+)?\z/
-          n = s.to_f
+        num, suffix = s =~ /\A-?\d/ ? value_literal(s) : [nil, nil]
+        if num
           if Param.length_unit?(units)
-            inches = Param.unit_to_inches(n, units)
+            # bare numbers arrive in display units; a suffixed literal
+            # carries its own unit (10cm in a feet field is still 10cm)
+            src = suffix && suffix != "DEGREES" ? suffix : units
+            inches = Param.unit_to_inches(num, src)
             return inches if dict_name == OS_DC_DICT
 
             target = target_units.to_s.empty? ? units : target_units
             return Param.inches_to_unit(inches, target)
           end
-          return n
+          # numeric-typed field or a bare number anywhere -> store the
+          # number; a length-suffixed literal in a text field stays text
+          return num if suffix.nil? || suffix == "DEGREES" ||
+                        NUMERIC_UNITS.include?(units.to_s.upcase)
+
+          return s
         end
         return true if s == "true"
         return false if s == "false"
