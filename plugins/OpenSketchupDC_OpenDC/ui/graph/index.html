@@ -12,66 +12,154 @@
       --fg: #d8d8de; --dim: #a9a9b2; --muted: #8a8a93;
       --accent: #4f9cf9; --accent2: #7fd0a2;
       --warn: #e69664; --error: #e66565; --border: #2a2b31;
+      --fn: #b9a5f0;
     }
-    body { background: var(--bg); color: var(--fg); margin: 0;
+    html, body { height: 100%; margin: 0; overflow: hidden;
+      background: var(--bg); color: var(--fg);
       font: 13px/1.45 "Segoe UI", sans-serif; }
     header {
-      display: flex; align-items: baseline; gap: 10px;
-      padding: 8px 12px; border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: var(--bg); z-index: 5;
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 12px; border-bottom: 1px solid var(--border);
+      background: var(--bg); z-index: 10; position: relative;
     }
-    #gtitle { font-weight: 600; color: var(--accent); }
+    #gtitle { font-weight: 600; color: var(--accent); white-space: nowrap; }
     .hint { font-size: 11px; color: var(--muted); }
-    #ghost { padding: 6px; }
-    .gmsg { color: var(--muted); padding: 20px; }
-    .gscroll { overflow: auto; padding: 4px; }
-    .depgraph { display: block; margin: 4px; }
-    .gnode { cursor: grab; }
-    .gnode rect { fill: var(--bg3); stroke: var(--border); stroke-width: 1; }
-    .gnode:hover rect { stroke: var(--accent); }
-    .gnode text {
-      fill: var(--fg); font-size: 10.5px;
+    #gadd {
+      margin-left: auto; background: var(--bg3); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 5px;
+      padding: 3px 12px; cursor: pointer; font-size: 12px;
+    }
+    #gadd:hover { background: var(--bg2); }
+    #rete { position: absolute; inset: 38px 0 0 0; }
+    #gmsg {
+      position: absolute; top: 60px; left: 0; right: 0;
+      text-align: center; color: var(--muted); display: none;
+      z-index: 5; pointer-events: none;
+    }
+
+    /* ---- node theme (same canvas family as the formula editor) ---- */
+    .node {
+      position: relative; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; min-width: 110px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.35);
       font-family: ui-monospace, Consolas, monospace;
-      text-anchor: middle; pointer-events: none;
     }
-    .gnode.ext rect { stroke-dasharray: 4 3; stroke: #2c5240; }
-    .gnode.ext text { fill: var(--accent2); }
-    .gnode.virt rect { stroke-dasharray: 4 3; stroke: #3a5a80; }
-    .gnode.virt text { fill: var(--accent); }
-    .gnode.cyclic rect { stroke: var(--error); fill: rgba(230, 100, 100, .12); }
-    .gnode.cyclic text { fill: var(--error); }
-    .gnode.dimmed { opacity: .35; }
-    .gnode.dropok rect { stroke: var(--accent2); stroke-width: 2; }
-    .gnode.dropbad rect { stroke: var(--error); stroke-width: 2; }
-    .gedge {
-      fill: none; stroke: var(--muted); stroke-width: 1.2;
-      opacity: .4; marker-end: url(#garr); cursor: pointer;
+    .node.selected { border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0,0,0,.35); }
+    .node.cyc { border-color: var(--error);
+      background: rgba(230, 100, 100, .10); }
+    .ntitle {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 3px 7px; border-bottom: 1px solid var(--border);
+      border-radius: 6px 6px 0 0; background: rgba(79,156,249,.07);
     }
-    .gedge.lit { stroke: var(--accent); opacity: 1; stroke-width: 1.6; }
-    .gedge.sel { stroke: var(--accent2); opacity: 1; stroke-width: 2; }
-    .gedge.dimmed { opacity: .12; }
-    .gedge.drag { stroke: var(--accent2); opacity: .9; stroke-dasharray: 5 3;
-      marker-end: url(#garr); pointer-events: none; }
-    .garr { fill: var(--muted); opacity: .4; }
+    .nkind { font-size: 8.5px; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--muted); }
+    .nname {
+      flex: 1; font-size: 12px; font-weight: 600; color: var(--fg);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .node.cyc .nname { color: var(--error); }
+    .node.ext  .nname { color: var(--accent2); }
+    .node.virt .nname { color: var(--accent); }
+    .node.ext  .ntitle { background: rgba(127,208,162,.07);
+      border-bottom-style: dashed; }
+    .node.virt .ntitle { background: rgba(79,156,249,.10);
+      border-bottom-style: dashed; }
+    .fxbtn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 4px; font-size: 9px; padding: 0 6px; cursor: pointer;
+      font-family: inherit; line-height: 14px;
+    }
+    .fxbtn:hover { color: var(--accent); border-color: var(--accent); }
+    .nbody { display: flex; padding: 2px 0; min-height: 18px; }
+    .col { display: flex; flex-direction: column; }
+    .col.ins  { align-items: flex-start; }
+    .col.ctrls { flex: 1; align-items: center; justify-content: center;
+      min-width: 0; overflow: hidden; }
+    .col.outs { align-items: flex-end; margin-left: auto; }
+    .port { display: flex; align-items: center; gap: 4px; }
+    .ptitle { font-size: 9px; color: var(--muted); padding-right: 2px; }
+    .sock {
+      width: 11px; height: 11px; border-radius: 6px; margin: 2px;
+      background: var(--bg); border: 2px solid var(--muted); cursor: pointer;
+    }
+    .sock:hover, .sock.used { border-color: var(--accent2);
+      background: var(--accent2); }
+    .fxline {
+      max-width: 150px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 9.5px; color: var(--dim);
+      padding: 0 8px;
+    }
+    #rete .connection path { stroke: var(--muted); stroke-width: 1.5;
+      fill: none; }
+    #rete .connection .main-path { stroke: var(--muted); stroke-width: 1.5; }
+    #rete .lit .main-path { stroke: var(--accent); stroke-width: 2;
+      opacity: 1; }
+    #rete .sel .main-path { stroke: var(--accent2); stroke-width: 2.2;
+      opacity: 1; }
+
+    /* plugin injects scoped [data-v] styles (blue theme) - #rete out-specifies */
+    #rete .context-menu {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
+      margin: 0; box-shadow: 0 8px 20px rgba(0,0,0,.55); z-index: 30;
+      font-family: ui-monospace, Consolas, monospace;
+      overflow: visible;
+    }
+    #rete .context-menu .item {
+      color: var(--fg); background: transparent; border: 0;
+      padding: 4px 14px; font-size: 11px; cursor: pointer;
+      font-family: inherit; width: auto; position: relative;
+    }
+    #rete .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
+    #rete .context-menu .search {
+      color: var(--fg); background: transparent; border: 0;
+      border-bottom: 1px solid var(--border); padding: 4px; width: auto;
+    }
+    #rete .context-menu .search input {
+      background: var(--bg2); border: 1px solid var(--border);
+      color: var(--fg); border-radius: 4px; padding: 3px 7px;
+      width: 100%; box-sizing: border-box;
+      font: 11px ui-monospace, Consolas, monospace; outline: none;
+    }
+    #rete .context-menu .search input:focus { border-color: var(--accent); }
+    #rete .context-menu .subitems {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+      padding: 3px 0; min-width: 150px;
+      max-height: min(340px, calc(100vh - 80px));
+      overflow-y: auto; overflow-x: hidden;
+    }
+    #rete .context-menu .item .subitems { display: none !important; }
+    #rete .context-menu .item:hover > .subitems { display: block !important; }
+
     #gtoast {
-      position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
       background: var(--bg3); border: 1px solid var(--border);
       border-radius: 6px; padding: 6px 12px; font-size: 12px;
-      color: var(--fg); opacity: 0; transition: opacity .2s; z-index: 20;
+      color: var(--fg); opacity: 0; transition: opacity .2s; z-index: 40;
       pointer-events: none; max-width: 90%;
     }
     #gtoast.show { opacity: 1; }
     #gtoast.err { border-color: var(--error); color: var(--error); }
-    #gconfirm {
+    #gconfirm, #gnew {
       position: fixed; inset: 0; background: rgba(0,0,0,.5);
-      display: none; align-items: center; justify-content: center; z-index: 30;
+      display: none; align-items: center; justify-content: center; z-index: 50;
     }
-    #gconfirm.show { display: flex; }
+    #gconfirm.show, #gnew.show { display: flex; }
     .gdialog {
       background: var(--bg2); border: 1px solid var(--border);
       border-radius: 8px; padding: 14px 16px; max-width: 320px;
     }
     .gdialog p { margin: 0 0 12px; }
+    .gdialog input[type=text] {
+      width: 100%; box-sizing: border-box; margin: 0 0 12px;
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--fg); border-radius: 5px; padding: 5px 8px;
+      font: 12px ui-monospace, Consolas, monospace; outline: none;
+    }
+    .gdialog input[type=text]:focus { border-color: var(--accent); }
     .gdialog .btns { display: flex; gap: 8px; justify-content: flex-end; }
     .gdialog button {
       background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
@@ -83,9 +171,13 @@
 <body>
   <header>
     <span id="gtitle">Dependency Graph</span>
-    <span class="hint">drag node → node to wire &middot; click edge + Del to unlink &middot; click node to highlight &middot; double-click node → node editor</span>
+    <span class="hint">drag socket &rarr; deps to wire &middot; click edge + Del
+      to unlink &middot; double-click / <b>fx</b> opens the formula canvas
+      &middot; right-click to add</span>
+    <button id="gadd" title="Add a new attribute">+ attr</button>
   </header>
-  <div id="ghost"><div class="gmsg">Loading…</div></div>
+  <div id="rete"></div>
+  <div id="gmsg">No parameter dependencies.</div>
   <div id="gtoast"></div>
   <div id="gconfirm"><div class="gdialog">
     <p id="gctext"></p>
@@ -94,258 +186,37 @@
       <button id="gcok" class="primary">Replace</button>
     </div>
   </div></div>
-  <script src="graph.js"></script>
+  <div id="gnew"><div class="gdialog">
+    <p>New attribute name</p>
+    <input id="gnewname" type="text" placeholder="e.g. shelf_count"
+      spellcheck="false" autocomplete="off">
+    <div class="btns">
+      <button id="gncancel">Cancel</button>
+      <button id="gnok" class="primary">Add</button>
+    </div>
+  </div></div>
+  <script src="../vendor/vue.min.js"></script>
+  <script src="../vendor/rete.min.js"></script>
+  <script src="../vendor/connection-plugin.min.js"></script>
+  <script src="../vendor/vue-render-plugin.min.js"></script>
   <script>
-    (function () {
-      var host = document.getElementById("ghost");
-      var toastEl = document.getElementById("gtoast");
-      var confirmEl = document.getElementById("gconfirm");
-      var cur = null;           // latest payload {label, entityId, graph}
-      var selEdge = null;       // selected edge {from,to}
-      var toastTimer = null;
-      var confirmCb = null;
-
-      function toast(msg, isErr) {
-        toastEl.textContent = msg;
-        toastEl.className = "show" + (isErr ? " err" : "");
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(function () { toastEl.className = ""; }, 2600);
-      }
-
-      function applyFormula(name, formula) {
-        sketchup.gact(JSON.stringify({
-          entityId: cur.entityId, name: name, formula: formula
-        }));
-      }
-
-      // ---- wiring ---------------------------------------------------
-      function nodeById(id) {
-        return (cur.graph.nodes || []).find(function (n) { return n.id === id; });
-      }
-
-      // Would wiring from->to close a dependency cycle? Only if 'to'
-      // already reaches 'from' transitively.
-      function createsCycle(from, to) {
-        var map = {};
-        cur.graph.edges.forEach(function (e) {
-          (map[e.from] = map[e.from] || []).push(e.to);
-        });
-        var seen = {}, stack = [to];
-        while (stack.length) {
-          var n = stack.pop();
-          if (n === from) return true;
-          if (!seen[n]) {
-            seen[n] = true;
-            (map[n] || []).forEach(function (m) { stack.push(m); });
-          }
+    // Minimal lodash stub — context-menu-plugin UMD expects window._
+    // and only uses debounce()/isFunction().
+    window._ = window._ || {
+      debounce: function (fn, wait) {
+        var t = null;
+        function d() {
+          var self = this, args = arguments;
+          if (t) clearTimeout(t);
+          t = setTimeout(function () { t = null; fn.apply(self, args); }, wait);
         }
-        return false;
-      }
-
-      function wire(from, to) {
-        if (from === to) return;
-        var t = nodeById(to);
-        if (!t) return;
-        if (t.external || t.virtual) {
-          toast("'" + to + "' is external/builtin - it can't take a formula", true);
-          return;
-        }
-        if (createsCycle(from, to)) {
-          toast("Wiring " + from + " -> " + to + " would create a cycle", true);
-          return;
-        }
-        if (t.hasFormula) {
-          askConfirm(
-            "Replace formula of '" + to + "' with '" + from + "'?",
-            function () { applyFormula(to, from); }
-          );
-        } else {
-          applyFormula(to, from);
-        }
-      }
-
-      function askConfirm(text, cb) {
-        document.getElementById("gctext").textContent = text;
-        confirmEl.classList.add("show");
-        confirmCb = cb;
-      }
-      document.getElementById("gcok").addEventListener("click", function () {
-        confirmEl.classList.remove("show");
-        if (confirmCb) confirmCb();
-        confirmCb = null;
-      });
-      document.getElementById("gccancel").addEventListener("click", function () {
-        confirmEl.classList.remove("show");
-        confirmCb = null;
-      });
-
-      // ---- unlink (edge delete = substitute literal value) ----------
-      // Replace CURRENT("name")-style calls first (the ref lives inside a
-      // string literal), then bare identifiers outside quoted strings.
-      function unlinkFormula(formula, refId, literal) {
-        var f = formula;
-        if (refId.indexOf("!") < 0) {
-          f = f.replace(new RegExp(
-            '(CURRENT|OPTIONINDEX|OPTIONVALUE)\\(\\s*"' + refId + '"\\s*\\)', "gi"),
-            literal);
-        }
-        var pat = refId.replace(/[.*+?^${}()|[\]\\!]/g, "\\$&");
-        var re = new RegExp("\\b" + pat + "\\b", "gi");
-        var parts = f.split('"'); // odd indexes are inside strings
-        return parts.map(function (p, i) {
-          return i % 2 ? p : p.replace(re, literal);
-        }).join('"');
-      }
-
-      function unlinkEdge(edge) {
-        var t = nodeById(edge.to);
-        if (!t || !t.formula) return;
-        var nf = unlinkFormula(t.formula, edge.from, edge.literal || "0");
-        applyFormula(edge.to, nf);
-        toast("Unlinked " + edge.from + " -> " + edge.to +
-              " (replaced by " + (edge.literal || "0") + ")");
-      }
-
-      // ---- highlight -------------------------------------------------
-      function highlight(name) {
-        var lit = {};
-        host.querySelectorAll(".gedge").forEach(function (p) {
-          var hit = name && (p.getAttribute("data-f") === name ||
-                             p.getAttribute("data-t") === name);
-          p.classList.toggle("lit", !!hit);
-          if (hit) {
-            lit[p.getAttribute("data-f")] = true;
-            lit[p.getAttribute("data-t")] = true;
-          }
-        });
-        host.querySelectorAll(".gnode").forEach(function (g) {
-          g.classList.toggle("dimmed", !!(name && !lit[g.getAttribute("data-gp")]));
-        });
-      }
-
-      // ---- render + interactions ------------------------------------
-      window.renderGraph = function (data) {
-        cur = data;
-        selEdge = null;
-        document.getElementById("gtitle").textContent =
-          (data.label || "") + " - dependencies";
-        host.innerHTML = OpenDCGraph.render(data.graph);
-        var svg = host.querySelector("svg");
-        if (!svg) return;
-        var NW = 132, NH = 26;
-
-        host.querySelectorAll(".gnode").forEach(function (gn) {
-          gn.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            highlight(gn.getAttribute("data-gp"));
-          });
-          gn.addEventListener("dblclick", function (ev) {
-            ev.stopPropagation();
-            var n = nodeById(gn.getAttribute("data-gp"));
-            if (n && !n.external && !n.virtual && cur.entityId) {
-              sketchup.gact(JSON.stringify({
-                op: "openNodes", entityId: cur.entityId,
-                name: gn.getAttribute("data-gp")
-              }));
-            }
-          });
-        });
-
-        // edge select
-        host.querySelectorAll(".gedge").forEach(function (p) {
-          p.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            host.querySelectorAll(".gedge.sel").forEach(function (q) {
-              q.classList.remove("sel");
-            });
-            p.classList.add("sel");
-            selEdge = { from: p.getAttribute("data-f"), to: p.getAttribute("data-t") };
-            toast("edge " + selEdge.from + " -> " + selEdge.to +
-                  " - press Del to unlink");
-          });
-        });
-        host.addEventListener("click", function () {
-          selEdge = null;
-          host.querySelectorAll(".gedge.sel").forEach(function (q) {
-            q.classList.remove("sel");
-          });
-          highlight(null);
-        });
-
-        // ---- drag-to-wire -------------------------------------------
-        var drag = null, tmp = null;
-        function svgPoint(ev) {
-          var r = svg.getBoundingClientRect();
-          var vb = svg.viewBox.baseVal;
-          return {
-            x: vb.x + (ev.clientX - r.left) * (vb.width / r.width),
-            y: vb.y + (ev.clientY - r.top) * (vb.height / r.height)
-          };
-        }
-        svg.addEventListener("mousedown", function (ev) {
-          var gn = ev.target.closest(".gnode");
-          if (!gn) return;
-          drag = { from: gn.getAttribute("data-gp"), sx: ev.clientX, sy: ev.clientY,
-                   moved: false, over: null };
-        });
-        window.addEventListener("mousemove", function (ev) {
-          if (!drag) return;
-          if (!drag.moved &&
-              Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) < 5) return;
-          drag.moved = true;
-          if (!tmp) {
-            tmp = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            tmp.setAttribute("class", "gedge drag");
-            svg.appendChild(tmp);
-          }
-          var src = svg.querySelector('[data-gp="' + drag.from + '"]');
-          var tr = src.getAttribute("transform").match(/translate\(([-\d.]+),([-\d.]+)\)/);
-          var x1 = parseFloat(tr[1]) + NW, y1 = parseFloat(tr[2]) + NH / 2;
-          var p = svgPoint(ev), mx = (x1 + p.x) / 2;
-          tmp.setAttribute("d", "M" + x1 + " " + y1 + " C" + mx + " " + y1 +
-            " " + mx + " " + p.y + " " + p.x + " " + p.y);
-          // hover feedback on candidate target
-          var el = document.elementFromPoint(ev.clientX, ev.clientY);
-          var t = el && el.closest ? el.closest(".gnode") : null;
-          var tid = t ? t.getAttribute("data-gp") : null;
-          if (tid !== drag.over) {
-            host.querySelectorAll(".gnode.dropok,.gnode.dropbad").forEach(function (g) {
-              g.classList.remove("dropok"); g.classList.remove("dropbad");
-            });
-            drag.over = tid;
-            if (tid && tid !== drag.from) {
-              var tn = nodeById(tid);
-              var bad = !tn || tn.external || tn.virtual || createsCycle(drag.from, tid);
-              t.classList.add(bad ? "dropbad" : "dropok");
-            }
-          }
-        });
-        window.addEventListener("mouseup", function (ev) {
-          if (!drag) return;
-          var d = drag; drag = null;
-          if (tmp) { tmp.remove(); tmp = null; }
-          host.querySelectorAll(".gnode.dropok,.gnode.dropbad").forEach(function (g) {
-            g.classList.remove("dropok"); g.classList.remove("dropbad");
-          });
-          if (!d.moved) return; // plain click - handled by click listener
-          var el = document.elementFromPoint(ev.clientX, ev.clientY);
-          var t = el && el.closest ? el.closest(".gnode") : null;
-          if (t) wire(d.from, t.getAttribute("data-gp"));
-        });
-      };
-
-      document.addEventListener("keydown", function (ev) {
-        if ((ev.key === "Delete" || ev.key === "Backspace") && selEdge && cur) {
-          var e2 = cur.graph.edges.find(function (x) {
-            return x.from === selEdge.from && x.to === selEdge.to;
-          });
-          if (e2) unlinkEdge(e2);
-          selEdge = null;
-        }
-      });
-
-      if (window.sketchup && sketchup.gready) sketchup.gready("");
-    })();
+        d.cancel = function () { if (t) { clearTimeout(t); t = null; } };
+        return d;
+      },
+      isFunction: function (v) { return typeof v === 'function'; }
+    };
   </script>
+  <script src="../vendor/context-menu-plugin.min.js"></script>
+  <script src="graph.js"></script>
 </body>
 </html>
