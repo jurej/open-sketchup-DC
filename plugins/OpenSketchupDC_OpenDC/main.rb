@@ -35,6 +35,22 @@ module OpenSketchupDC
       menu.add_separator
       menu.add_item("Convert to Open DC") { Commands.convert_selection }
       menu.add_item("Revert to Classic DC") { Commands.revert_selection }
+
+      # Right-click on a dynamic component: same actions, contextual.
+      # Nothing is added for non-DC selections so other menus stay clean.
+      UI.add_context_menu_handler do |context_menu|
+        next if Selection.targets(Sketchup.active_model).empty?
+
+        sub = context_menu.add_submenu("Open DC")
+        sub.add_item("Parameter Panel") { Panel.toggle }
+        sub.add_item("Interact Tool") { Commands.interact }
+        sub.add_separator
+        sub.add_item("Recompute") { Commands.recompute_selection }
+        sub.add_separator
+        sub.add_item("Convert to Open DC") { Commands.convert_selection }
+        sub.add_item("Revert to Classic DC") { Commands.revert_selection }
+      end
+
       file_loaded(__FILE__)
     end
   end
