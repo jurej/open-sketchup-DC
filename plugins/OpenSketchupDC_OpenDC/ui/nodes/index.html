@@ -84,7 +84,6 @@
       color: var(--fg); border-radius: 4px; padding: 1px 4px;
       font: 11px ui-monospace, Consolas, monospace;
     }
-    .node .nval { padding: 0; font-size: 11px; color: var(--dim); }
     .node .nops {
       background: var(--bg2); border: 1px solid var(--border);
       color: var(--fg); border-radius: 4px; padding: 0 3px;
@@ -109,6 +108,7 @@
       border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
       margin: 0; box-shadow: 0 8px 20px rgba(0,0,0,.55); z-index: 30;
       font-family: ui-monospace, Consolas, monospace;
+      max-height: min(420px, calc(100vh - 60px)); overflow-y: auto;
     }
     #rete .context-menu .item {
       color: var(--fg); background: transparent; border: 0;
@@ -131,6 +131,8 @@
       background: var(--bg3); border: 1px solid var(--border);
       border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
       padding: 3px 0;
+      max-height: min(400px, calc(100vh - 80px)); overflow-y: auto;
+      min-width: 150px;
     }
     #ntoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);

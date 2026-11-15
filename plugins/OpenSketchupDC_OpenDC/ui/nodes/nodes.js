@@ -50,12 +50,6 @@
     }
   };
 
-  // Read-only value label (attr name, function name, ref).
-  var LabelControl = {
-    props: ["ikey", "getData", "putData", "node"],
-    template: '<div class="nval">{{node.data.v}}</div>'
-  };
-
   // Operator chooser - edits data.v among a fixed op list.
   var OpSelect = {
     props: ["ikey", "getData", "putData", "ops"],
@@ -194,11 +188,9 @@
 
   var components = [
     comp("attr", function (n) {
-      n.addControl(ctrl("lbl", LabelControl, { node: n }));
       n.addOutput(new Rete.Output("out", "value", socketVal));
     }),
     comp("ref", function (n) {
-      n.addControl(ctrl("lbl", LabelControl, { node: n }));
       n.addOutput(new Rete.Output("out", "value", socketVal));
     }),
     comp("const", function (n) {
@@ -220,7 +212,6 @@
       var v = n.data.v;
       var arity = (state.fnArity || {})[v];
       var count = n.data.argc || arity || 1;
-      n.addControl(ctrl("lbl", LabelControl, { node: n }));
       for (var i = 0; i < count; i++) {
         n.addInput(new Rete.Input("arg" + i, "" + i, socketVal));
       }
@@ -231,7 +222,6 @@
     }),
     comp("act", function (n) {
       var count = n.data.argc || 2;
-      n.addControl(ctrl("lbl", LabelControl, { node: n }));
       for (var i = 0; i < count; i++) {
         n.addInput(new Rete.Input("arg" + i, "" + i, socketVal));
       }
@@ -390,7 +380,9 @@
       items: menuItems(),
       // default allocate returns [] per component which still registers a
       // bare menu item - return null so only our categorized items show
-      allocate: function () { return null; }
+      allocate: function () { return null; },
+      // default 1s submenu hide delay leaves overlapping submenus open
+      delay: 120
     });
     components.forEach(function (c) { editor.register(c); });
     window.__dbg = { editor: editor, comps: components };
