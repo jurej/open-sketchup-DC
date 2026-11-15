@@ -43,7 +43,7 @@ module OpenSketchupDC
 
       attr_accessor :name, :value, :default, :label, :formlabel,
                     :formula, :formulaunits, :access, :options, :units,
-                    :overridden, :internal, :error
+                    :overridden, :internal, :error, :tooltip, :section
 
       def initialize(name, attrs = {})
         @name = name.to_s.downcase
@@ -56,6 +56,8 @@ module OpenSketchupDC
         @access       = normalize_access(attrs[:access])
         @options      = attrs[:options]
         @units        = attrs[:units]
+        @tooltip      = attrs[:tooltip]
+        @section      = attrs[:section]
         @overridden   = attrs.fetch(:overridden, false)
         @internal     = attrs.fetch(:internal, false)
         @error        = attrs[:error]
@@ -178,7 +180,9 @@ module OpenSketchupDC
           "displayValue" => display_value,
           "overridden" => @overridden,
           "internal" => @internal,
-          "error" => @error
+          "error" => @error,
+          "tooltip" => @tooltip,
+          "section" => @section
         }
       end
 

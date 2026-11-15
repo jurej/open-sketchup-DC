@@ -134,17 +134,30 @@ window.OpenDC = (function () {
         '<span class="badge kind">' + esc(e.kind) + '</span>' +
         '<span class="badge ' + (e.engine === "osdc" ? "osdc" : "") + '">' +
           (e.engine === "osdc" ? "Open DC" : "Classic") + '</span>' +
-        '<button class="small" data-graph title="Dependency graph">⤢</button>' +
+        '<button class="small ghost-acc" data-graph title="Dependency graph">⤢</button>' +
         (e.engine === "osdc"
-          ? '<button class="small" data-act="revert">Revert</button>'
-          : '<button class="small" data-act="convert">Convert</button>') +
+          ? '<button class="small danger" data-act="revert">Revert</button>'
+          : '<button class="small primary" data-act="convert">Convert</button>') +
         '</header>' +
         '<div class="tabs">' +
         '<button data-tab="options" class="' + (tab === "options" ? "active" : "") + '">Options</button>' +
         '<button data-tab="advanced" class="' + (tab === "advanced" ? "active" : "") + '">Advanced</button>' +
         '</div>' +
         '<div class="params">' +
-        params.map(function (p) { return renderParam(e, p, tab === "advanced"); }).join("") +
+        params.map(function (p, i) {
+          var sec = p.section || "";
+          var hdr = "";
+          if (i === 0 || (params[i - 1].section || "") !== sec) {
+            // named sections get a labeled divider; a trailing unnamed
+            // group gets a bare line so it isn't glued to the last section
+            if (sec || (params[i - 1] && params[i - 1].section)) {
+              hdr = '<div class="section' + (sec ? "" : " bare") + '"' +
+                    (sec ? ' data-sec="' + esc(sec) + '"' : "") + '">' +
+                    (sec ? '<span>' + esc(sec) + '</span>' : "") + '</div>';
+            }
+          }
+          return hdr + renderParam(e, p, tab === "advanced");
+        }).join("") +
         (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>') +
         '</div>' +
         addFormHtml(e) +
@@ -161,8 +174,14 @@ window.OpenDC = (function () {
     var editOpen = openEdit[key] && advanced;
     var suf = unitSuffix(p);
     var pun = suf ? ' <span class="pun">' + esc(suf) + '</span>' : "";
-    var html = '<div class="prow' + (p.internal ? " internal" : "") + '">' +
-      '<span class="pname" title="' + esc(p.name) + '"><b>' + esc(p.displayName) + '</b>' +
+    var grip = advanced && !p.internal
+      ? '<span class="grip" draggable="true" title="Drag to reorder">&#x2807;</span>'
+      : "";
+    var html = '<div class="prow' + (p.internal ? " internal" : "") + '"' +
+      (p.internal ? "" : ' data-pname="' + esc(p.name) + '"') + '>' +
+      '<span class="pname" title="' + esc(p.tooltip || p.name) + '">' + grip +
+      '<b>' + esc(p.displayName) + '</b>' +
+      (p.tooltip ? ' <span class="tipdot">i</span>' : '') +
       (p.internal ? ' <span class="formula-hint">sys</span>' : '') +
       (p.overridden ? ' <span class="formula-hint">*</span>' : '') +
       '</span>' +
@@ -211,9 +230,12 @@ window.OpenDC = (function () {
       '</div><input type="hidden" data-f="options" value="' + esc(p.options || "") + '"></div>' +
       '<div><label>formlabel</label><input data-f="formlabel" value="' + esc(p.formlabel || "") + '"></div>' +
       '<div><label>label</label><input data-f="label" value="' + esc(p.label || "") + '"></div>' +
+      '<div class="full"><label>tooltip - hint shown when hovering the attribute</label>' +
+      '<input data-f="tooltip" value="' + esc(p.tooltip || "") + '" ' +
+      'placeholder="e.g. Door panel thickness"></div>' +
       '<div class="full row-actions">' +
-      '<button class="small" data-del="' + n + '">Delete</button>' +
-      '<button class="small primary" data-save="' + n + '">Apply</button>' +
+      '<button class="small danger" data-del="' + n + '">Delete</button>' +
+      '<button class="small confirm" data-save="' + n + '">Apply</button>' +
       '</div>' +
       '</div>';
   }
@@ -462,6 +484,75 @@ window.OpenDC = (function () {
           access: form.elements.namedItem("access").value,
           value: form.elements.namedItem("value").value
         });
+      });
+    });
+
+    wireReorder(host);
+  }
+
+  /* ---------------- attribute reorder (advanced tab) ---------------- */
+  // Drag the grip to reorder rows; on drop the visible sequence
+  // (names + &Title& markers) is stored as _itemorder.
+  function orderTokens(box) {
+    var toks = [];
+    box.querySelectorAll(".section, .prow[data-pname]").forEach(function (el) {
+      if (el.classList.contains("section")) {
+        toks.push("&" + el.getAttribute("data-sec") + "&");
+      } else {
+        toks.push(el.getAttribute("data-pname"));
+      }
+    });
+    return toks;
+  }
+
+  function clearDropMarks(box) {
+    box.querySelectorAll(".prow.drop-before, .prow.drop-after").forEach(function (r) {
+      r.classList.remove("drop-before", "drop-after");
+    });
+    box._dropRow = null;
+  }
+
+  function wireReorder(host) {
+    host.querySelectorAll(".grip").forEach(function (g) {
+      var row = g.closest(".prow");
+      g.addEventListener("dragstart", function (ev) {
+        ev.dataTransfer.effectAllowed = "move";
+        ev.dataTransfer.setData("text/plain", row.getAttribute("data-pname"));
+        ev.dataTransfer.setDragImage(row, 12, 12);
+        row.classList.add("dragging");
+      });
+    });
+    host.querySelectorAll(".params").forEach(function (box) {
+      box.addEventListener("dragover", function (ev) {
+        var row = ev.target.closest(".prow[data-pname]");
+        if (!row || row.classList.contains("dragging")) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "move";
+        var r = row.getBoundingClientRect();
+        var before = ev.clientY < r.top + r.height / 2;
+        clearDropMarks(box);
+        row.classList.add(before ? "drop-before" : "drop-after");
+        box._dropRow = row;
+        box._dropBefore = before;
+      });
+      box.addEventListener("drop", function (ev) {
+        ev.preventDefault();
+        var src = box.querySelector(".prow.dragging");
+        var dst = box._dropRow;
+        if (src && dst && src !== dst) {
+          box.insertBefore(src, box._dropBefore ? dst : dst.nextSibling);
+          send("reorder", {
+            entityId: box.closest(".card").getAttribute("data-eid"),
+            order: orderTokens(box)
+          });
+        }
+        clearDropMarks(box);
+      });
+      box.addEventListener("dragend", function () {
+        box.querySelectorAll(".prow.dragging").forEach(function (r) {
+          r.classList.remove("dragging");
+        });
+        clearDropMarks(box);
       });
     });
   }

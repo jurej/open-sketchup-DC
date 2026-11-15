@@ -57,9 +57,21 @@ input, select, button, textarea {
   font: inherit;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
-button { cursor: pointer; }
+button { cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
 button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-weight: 600;
+}
+button.primary:hover { background: #6fafff; border-color: #6fafff; }
+button.confirm {
+  background: #2c5240; border-color: var(--accent2); color: var(--accent2);
+}
+button.confirm:hover { background: #39694f; color: #fff; }
+button.danger { color: var(--error); }
+button.danger:hover { border-color: var(--error); background: rgba(229,100,108,.12); }
+button.ghost-acc { color: var(--accent); border-color: rgba(79,156,249,.45); }
+button.ghost-acc:hover { background: rgba(79,156,249,.15); border-color: var(--accent); }
 button.small { padding: 1px 7px; font-size: 12px; }
 
 /* ---------- banner / toast ---------- */
@@ -137,6 +149,65 @@ button.small { padding: 1px 7px; font-size: 12px; }
 .prow.internal .pname { font-style: italic; }
 .prow .err { color: var(--error); font-size: 11px; grid-column: 1 / -1; }
 .prow .formula-hint { font-size: 10px; color: var(--accent); }
+
+/* ---------- sections ---------- */
+.section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  padding: 0 10px;
+}
+.section span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.section::before, .section::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.section::before { flex: 0 0 12px; }
+.section.bare::before { flex: 1; }
+
+/* ---------- tooltip hint marker ---------- */
+.tipdot {
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: rgba(79,156,249,.18);
+  color: var(--accent);
+  font-size: 8.5px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 12px;
+  text-align: center;
+  vertical-align: 1px;
+  cursor: help;
+}
+
+/* ---------- reorder ---------- */
+.grip {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: -1px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity .12s;
+  user-select: none;
+}
+.prow:hover .grip { opacity: .9; }
+.grip:active { cursor: grabbing; }
+.prow.dragging { opacity: .35; }
+.prow.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.prow.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ---------- advanced editor ---------- */
 .pedit {

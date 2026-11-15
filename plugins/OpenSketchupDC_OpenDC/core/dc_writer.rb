@@ -52,6 +52,14 @@ module OpenSketchupDC
         owner_for(entity).set_attribute(dict_name, key.to_s, value)
       end
 
+      # Display order of attributes in the options form. `items` is the
+      # ordered token list: attribute names plus "&Title&" section markers,
+      # joined into classic _itemorder format.
+      def set_order(entity, items, dict_name: DC_DICT)
+        tokens = items.map { |t| t.to_s.strip }.reject(&:empty?)
+        owner_for(entity).set_attribute(dict_name, "_itemorder", tokens.join(","))
+      end
+
       # Creates a full attribute cluster like the DC editor does.
       def add_param(entity, name:, label: nil, formlabel: nil,
                     access: ACCESS_TEXTBOX, value: "", units: "STRING",

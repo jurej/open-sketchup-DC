@@ -19,14 +19,14 @@ module OpenSketchupDC
     # Meta fields stored as _<attr>_<field> in both dictionary formats.
     META_FIELDS = %w[
       label formula formulaunits access options units formlabel
-      nominal error display
+      nominal error display tooltip
     ].freeze
 
     # Keys that are entity-level metadata, not user attributes.
     SYSTEM_KEYS = %w[
       _name _formatversion _hasbehaviors _has_movetool_behaviors
       _has_interact_behaviors _lengthunits _lastmodified _scaletool
-      _engine _legacy_dc
+      _engine _legacy_dc _itemorder
     ].freeze
 
     # Access levels for user-visible params (same semantics as classic DC).

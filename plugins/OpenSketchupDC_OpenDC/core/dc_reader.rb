@@ -101,7 +101,18 @@ module OpenSketchupDC
         node = dict_get(base, "_name")
         node ||= dict_get(inst_dict, "_name") if inst_dict
 
-        params = names.sort.map { |n| param_for(n, base, inst_dict, kind) }
+        # Display order: _itemorder when present (classic format - comma
+        # list where "&Title&" entries are section headers in the options
+        # dialog), otherwise the dict's own key order (what classic DC
+        # shows). Unlisted attrs append sorted at the end, no section.
+        order, sections = parse_itemorder(dict_get(base, "_itemorder"))
+        ordered = order & names
+        leftover = (names - ordered).sort
+        params = (ordered + leftover).map do |n|
+          p = param_for(n, base, inst_dict, kind)
+          p.section = sections[n]
+          p
+        end
         params += system_params(base, inst_dict)
 
         ParamSet.new(entity_id: entity_id, kind: kind, engine: engine,
@@ -157,6 +168,7 @@ module OpenSketchupDC
                   access: meta["access"],
                   options: meta["options"],
                   units: meta["units"],
+                  tooltip: meta["tooltip"],
                   overridden: kind == :component && !override.nil? && override != default,
                   error: param_error(base, name))
       end
@@ -175,6 +187,40 @@ module OpenSketchupDC
         return nil if stripped.empty? || stripped =~ /\A-?[\d.]+(?:e[+-]?\d+)?\z/i
 
         stripped
+      end
+
+      # Parses classic _itemorder: "a,b,&Title&,c" -> ordered names +
+      # {name => section title}. Entries wrapped in &...& are section
+      # headers; names before the first header have no section ("").
+      def parse_itemorder(raw)
+        return [[], {}] if raw.to_s.strip.empty?
+
+        order = []
+        sections = {}
+        current = ""
+        raw.to_s.split(",").each do |tok|
+          tok = tok.strip
+          next if tok.empty?
+
+          # Attr names can't contain &, so &-parts inside a token
+          # alternate: name, title, name... A token starting with & has a
+          # title first. Handles "&T&", "&T&name" and "name&T&name".
+          expect_name = !tok.start_with?("&")
+          tok.split("&").each do |part|
+            part = part.strip
+            next if part.empty?
+
+            if expect_name
+              order << part.downcase
+              sections[part.downcase] = current
+              expect_name = false
+            else
+              current = part
+              expect_name = true
+            end
+          end
+        end
+        [order, sections]
       end
 
       # Entity-level metadata (leading-underscore keys) exposed read-only.

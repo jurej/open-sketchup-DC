@@ -105,6 +105,7 @@ module OpenSketchupDC
         when "setMeta"       then cmd_set_meta(p)
         when "addParam"      then cmd_add_param(p)
         when "deleteParam"   then cmd_delete_param(p)
+        when "reorder"       then cmd_reorder(p)
         when "batchSet"      then cmd_batch_set(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
@@ -208,6 +209,19 @@ module OpenSketchupDC
             DCWriter.delete_param(e, p["name"], dict_name: dict_name)
           end
           reevaluate(e, dict_name)
+          push_state
+        end
+      end
+
+      # Drag-reorder in the panel: the frontend ships the visible token
+      # list (param names + "&Title&" section markers) which we store as
+      # classic _itemorder. Order does not affect evaluation - no reeval.
+      def cmd_reorder(p)
+        with_entity(p["entityId"]) do |e|
+          dict_name = DCReader.dict_name_for(e)
+          Helpers.undo_wrap(Sketchup.active_model, "Open DC: Reorder attributes") do
+            DCWriter.set_order(e, p["order"] || [], dict_name: dict_name)
+          end
           push_state
         end
       end
@@ -441,12 +455,12 @@ module OpenSketchupDC
             @graph_dialog = ::UI::HtmlDialog.new(
               dialog_title: "Open DC - Dependency Graph",
               preferences_key: "#{PLUGIN_ID}_graph",
-              scrollable: true,
+              scrollable: false,
               resizable: true,
-              width: 640,
-              height: 520,
-              min_width: 320,
-              min_height: 240,
+              width: 800,
+              height: 600,
+              min_width: 400,
+              min_height: 300,
               style: ::UI::HtmlDialog::STYLE_UTILITY
             )
             @graph_dialog.add_action_callback("gready") do |_ctx, arg|
@@ -478,9 +492,9 @@ module OpenSketchupDC
       # Formula edits coming from the graph window (wire/unlink). Same
       # validation + undo + reevaluate path as the panel's formula field.
       def graph_apply(data)
-        if data["op"].to_s == "openNodes"
-          cmd_nodes(data)
-          return
+        case data["op"].to_s
+        when "openNodes" then return cmd_nodes(data)
+        when "addParam"  then return graph_add_param(data)
         end
 
         ent = entity(data["entityId"].to_s)
@@ -517,6 +531,51 @@ module OpenSketchupDC
 
         json = JSON.generate(json_safe(@graph_pending))
         @graph_dialog.execute_script("window.renderGraph && window.renderGraph(#{json})")
+      end
+
+      # One-shot status to the graph window (errors/hints that don't come
+      # with a fresh renderGraph push).
+      def push_graph_status(payload)
+        return if @graph_dialog.nil?
+
+        json = JSON.generate(json_safe(payload))
+        @graph_dialog.execute_script("window.onGraphStatus && window.onGraphStatus(#{json})")
+      end
+
+      # Context-menu "+ attr" on the dependency graph: creates a plain
+      # user attribute cluster, then re-pushes so the new param shows up
+      # as a wire target.
+      def graph_add_param(data)
+        ent = entity(data["entityId"].to_s)
+        if ent.nil?
+          return push_graph_status("error" => "Entity no longer available (selection changed?)")
+        end
+
+        name = data["name"].to_s.strip.downcase
+        unless name =~ /\A[a-z][a-z0-9_]*\z/
+          return push_graph_status(
+            "error" => "Invalid attribute name '#{data['name']}' - letters, digits, underscores only")
+        end
+
+        dict_name = DCReader.dict_name_for(ent)
+        if read_graph_set(ent, data["entityId"].to_s)[name]
+          return push_graph_status("error" => "Attribute '#{name}' already exists")
+        end
+
+        Helpers.undo_wrap(Sketchup.active_model, "Open DC: Add #{name}") do
+          DCWriter.add_param(ent, name: name, access: ACCESS_TEXTBOX, dict_name: dict_name)
+        end
+        reevaluate(ent, dict_name)
+        push_state
+        push_graph_status("msg" => "Added '#{name}'")
+        @graph_pending = {
+          "label" => entity_label(ent),
+          "entityId" => data["entityId"].to_s,
+          "graph" => entity_graph(read_graph_set(ent, data["entityId"].to_s))
+        }
+        push_graph
+      rescue StandardError => e
+        push_graph_status("error" => e.message)
       end
 
       # ------------------------------------------------------------------
