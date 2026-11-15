@@ -43,8 +43,21 @@ module OpenSketchupDC
              Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1),
                                            rz * Math::PI / 180.0) *
              Geom::Transformation.scaling(sx, sy, sz)
-        entity.transformation = tr
+        begin
+          entity.transformation = tr
+        rescue StandardError => e
+          # Last-resort guard - a singular matrix must never pop a modal.
+          puts "Open DC: transform skipped on #{entity}: #{e.message}"
+        end
       end
+
+      # A zero (or near-zero) len value would make the scale matrix
+      # singular - SketchUp rejects non-invertible transforms. Clamp to a
+      # hairline instead: geometry collapses visually and recovers on the
+      # next eval, no crash, no modal. 1e-4 is safely above SketchUp's
+      # degeneracy threshold (~1e-5 passes, ~1e-6 fails).
+      MIN_SCALE = 1.0e-4
+      CLAMP_ERR = "zero len collapses the component - clamped".freeze
 
       def scale_factors(entity, values, dict_name)
         %w[x y z].map do |axis|
@@ -52,8 +65,31 @@ module OpenSketchupDC
           next 1.0 if len.nil?
 
           nom = nominal(entity, axis, dict_name)
-          nom.to_f.zero? ? 1.0 : len.to_f / nom
+          s = nom.to_f.zero? ? 1.0 : len.to_f / nom
+          if !s.finite? || s.abs < MIN_SCALE
+            flag_clamp(entity, axis, dict_name)
+            next s.finite? && s < 0 ? -MIN_SCALE : MIN_SCALE
+          end
+          unflag_clamp(entity, axis, dict_name)
+          s
         end
+      end
+
+      def flag_clamp(entity, axis, dict_name)
+        DCWriter.set_meta(entity, "len#{axis}", "error", CLAMP_ERR,
+                          dict_name: dict_name)
+      rescue StandardError
+        nil
+      end
+
+      # Clear only OUR clamp message - never a real formula error.
+      def unflag_clamp(entity, axis, dict_name)
+        owner = DCWriter.owner_for(entity)
+        dict = DCReader.dict_of(owner, dict_name)
+        key = "_len#{axis}_error"
+        owner.set_attribute(dict_name, key, nil) if DCReader.dict_get(dict, key) == CLAMP_ERR
+      rescue StandardError
+        nil
       end
 
       # Nominal (unscaled) length along an axis: _len<axis>_nominal meta,
@@ -110,7 +146,10 @@ module OpenSketchupDC
       end
 
       def v(values, key, default)
-        values.key?(key) ? values[key].to_f : default
+        return default unless values.key?(key)
+
+        f = values[key].to_f
+        f.finite? ? f : default
       end
     end
   end
