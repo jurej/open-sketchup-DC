@@ -103,21 +103,34 @@
     }
     .connection path { stroke: var(--muted); stroke-width: 2; fill: none; }
     .connection .main-path { stroke: var(--muted); }
-    .context-menu {
+    /* plugin injects scoped [data-v] styles (blue theme) - #rete out-specifies */
+    #rete .context-menu {
       background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 6px; padding: 4px 0; min-width: 160px;
-      box-shadow: 0 6px 18px rgba(0,0,0,.5); z-index: 30;
-    }
-    .context-menu .item {
-      padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--fg);
+      border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
+      margin: 0; box-shadow: 0 8px 20px rgba(0,0,0,.55); z-index: 30;
       font-family: ui-monospace, Consolas, monospace;
     }
-    .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
-    .context-menu .item .subitems { background: var(--bg3); }
-    .context-menu .search input {
+    #rete .context-menu .item {
+      color: var(--fg); background: transparent; border: 0;
+      padding: 4px 14px; font-size: 11px; cursor: pointer;
+      font-family: inherit; width: auto; position: relative;
+    }
+    #rete .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
+    #rete .context-menu .search {
+      color: var(--fg); background: transparent; border: 0;
+      border-bottom: 1px solid var(--border); padding: 4px; width: auto;
+    }
+    #rete .context-menu .search input {
       background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 3px 6px;
-      margin: 4px 8px; width: calc(100% - 16px); box-sizing: border-box;
+      color: var(--fg); border-radius: 4px; padding: 3px 7px;
+      width: 100%; box-sizing: border-box;
+      font: 11px ui-monospace, Consolas, monospace; outline: none;
+    }
+    #rete .context-menu .search input:focus { border-color: var(--accent); }
+    #rete .context-menu .subitems {
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+      padding: 3px 0;
     }
     #ntoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);

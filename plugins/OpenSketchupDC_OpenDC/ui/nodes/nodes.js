@@ -386,7 +386,12 @@
     editor = new Rete.NodeEditor("odc@0.1.0", container);
     editor.use(ConnectionPlugin.default);
     editor.use(VueRenderPlugin.default, { component: ODCNode });
-    editor.use(ContextMenuPlugin.default, { items: menuItems() });
+    editor.use(ContextMenuPlugin.default, {
+      items: menuItems(),
+      // default allocate returns [] per component which still registers a
+      // bare menu item - return null so only our categorized items show
+      allocate: function () { return null; }
+    });
     components.forEach(function (c) { editor.register(c); });
     window.__dbg = { editor: editor, comps: components };
 
