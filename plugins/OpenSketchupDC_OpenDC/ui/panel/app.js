@@ -186,7 +186,9 @@ window.OpenDC = (function () {
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
       '<div class="full"><label>formula <button type="button" class="fxdocs" ' +
-      'data-fxdocs title="Function &amp; syntax reference">&#402;(x)</button></label>' +
+      'data-fxdocs title="Function &amp; syntax reference">&#402;(x)</button>' +
+      '<button type="button" class="fxdocs" data-fxnodes="' + n + '" ' +
+      'title="Edit as node graph">&#x2A02;</button></label>' +
       '<div class="fxedit">' +
       '<div class="fxed" contenteditable="true" spellcheck="false" autocapitalize="off"></div>' +
       '<input type="hidden" data-f="formula" value="' + esc(p.formula || "") + '">' +
@@ -373,6 +375,15 @@ window.OpenDC = (function () {
 
     host.querySelectorAll("[data-fxdocs]").forEach(function (b) {
       b.addEventListener("click", function () { send("fxDocs"); });
+    });
+
+    host.querySelectorAll("[data-fxnodes]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        send("nodes", {
+          entityId: b.closest(".card").getAttribute("data-eid"),
+          name: b.getAttribute("data-fxnodes")
+        });
+      });
     });
 
     wireOptionEditors(host);

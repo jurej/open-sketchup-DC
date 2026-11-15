@@ -12,6 +12,7 @@ module OpenSketchupDC
     module Panel
       PANEL_FILE = File.join(PLUGIN_DIR, "ui", "panel", "index.html")
       GRAPH_FILE = File.join(PLUGIN_DIR, "ui", "graph", "index.html")
+      NODES_FILE = File.join(PLUGIN_DIR, "ui", "nodes", "index.html")
 
       @dialog = nil
       @push_pending = false
@@ -109,6 +110,7 @@ module OpenSketchupDC
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
         when "graph"         then cmd_graph(p["entityId"])
+        when "nodes"         then cmd_nodes(p)
         when "qaEcho"        then @qa_last = p["r"] # dev/QA read-back channel
         when "convert" then with_entity(p["entityId"]) do |e|
           Convert.to_open_dc(e)
@@ -475,6 +477,11 @@ module OpenSketchupDC
       # Formula edits coming from the graph window (wire/unlink). Same
       # validation + undo + reevaluate path as the panel's formula field.
       def graph_apply(data)
+        if data["op"].to_s == "openNodes"
+          cmd_nodes(data)
+          return
+        end
+
         ent = entity(data["entityId"].to_s)
         if ent.nil?
           push_error("Entity no longer available (selection changed?)")
@@ -509,6 +516,126 @@ module OpenSketchupDC
 
         json = JSON.generate(json_safe(@graph_pending))
         @graph_dialog.execute_script("window.renderGraph && window.renderGraph(#{json})")
+      end
+
+      # ------------------------------------------------------------------
+      # Node editor (Rete.js expression graph) for a single attribute
+      # ------------------------------------------------------------------
+
+      def cmd_nodes(p)
+        with_entity(p["entityId"]) do |ent|
+          dict_name = DCReader.dict_name_for(ent)
+          ps = DCReader.read(ent, dict_name: dict_name, entity_id: p["entityId"])
+          param = ps[p["name"].to_s.downcase]
+          graph = begin
+            param&.formula? ? AstGraph.to_graph(param.formula) : nil
+          rescue StandardError
+            nil
+          end
+          @nodes_pending = {
+            "entityId" => p["entityId"].to_s,
+            "name" => p["name"].to_s.downcase,
+            "label" => "#{entity_label(ent)} :: #{p['name']}",
+            "formula" => param ? param.formula.to_s : "",
+            "graph" => graph,
+            "attrs" => ps.names,
+            "builtins" => DCReader::BUILTIN_ATTRS,
+            "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
+            "functions" => Expression::FUNCTIONS,
+            "actions" => Expression::Evaluator::ACTIONS,
+            "fnArity" => AstGraph::FN_ARITY,
+            "fnVararg" => AstGraph::FN_VARARG,
+            "isAction" => p["name"].to_s.casecmp("onclick").zero?
+          }
+          open_nodes_dialog
+        end
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      def open_nodes_dialog
+        if @nodes_dialog.nil?
+          @nodes_dialog = ::UI::HtmlDialog.new(
+            dialog_title: "Open DC - Node Editor",
+            preferences_key: "#{PLUGIN_ID}_nodes",
+            scrollable: false,
+            resizable: true,
+            width: 900,
+            height: 640,
+            min_width: 480,
+            min_height: 320,
+            style: ::UI::HtmlDialog::STYLE_UTILITY
+          )
+          @nodes_dialog.add_action_callback("nready") do |_ctx, _a|
+            @nodes_ready = true
+            push_nodes
+          end
+          @nodes_dialog.add_action_callback("nact") do |_ctx, json|
+            @nlast = json.to_s
+            nodes_apply(JSON.parse(json.to_s))
+          end
+          @nodes_dialog.set_can_close do
+            @nodes_dialog = nil
+            true
+          end
+          @nodes_dialog.set_file(NODES_FILE)
+          @nodes_dialog.show
+        else
+          push_nodes
+          @nodes_dialog.bring_to_front
+        end
+      end
+
+      def push_nodes
+        return if @nodes_dialog.nil? || @nodes_pending.nil?
+
+        json = JSON.generate(json_safe(@nodes_pending))
+        @nodes_dialog.execute_script("window.renderNodes && window.renderNodes(#{json})")
+      end
+
+      def push_nodes_status(payload)
+        return if @nodes_dialog.nil?
+
+        json = JSON.generate(json_safe(payload))
+        @nodes_dialog.execute_script("window.onNodeStatus && window.onNodeStatus(#{json})")
+      end
+
+      # nact ops: preview emits the formula + validation only; apply also
+      # writes it through the normal validated/undo/reevaluate path.
+      def nodes_apply(data)
+        return if data["op"].to_s == "dbg" # JS diagnostics - kept in @nlast
+
+        formula =
+          begin
+            AstGraph.to_formula(data["doc"] || {})
+          rescue StandardError => e
+            return push_nodes_status("ok" => false, "errors" => [e.message])
+          end
+
+        ent = entity(data["entityId"].to_s)
+        if ent.nil?
+          return push_nodes_status("ok" => false, "errors" => ["entity unavailable"])
+        end
+
+        v = validate_formula(ent, formula, data["name"].to_s)
+        unless v["ok"]
+          return push_nodes_status("ok" => false, "errors" => v["errors"])
+        end
+
+        if data["op"].to_s == "apply"
+          dict_name = DCReader.dict_name_for(ent)
+          Helpers.undo_wrap(Sketchup.active_model, "Open DC: Nodes #{data['name']}") do
+            DCWriter.set_meta(ent, data["name"], "formula", formula, dict_name: dict_name)
+          end
+          reevaluate(ent, dict_name)
+          push_state
+          push_nodes_status("ok" => true, "formula" => formula, "applied" => true)
+        else
+          push_nodes_status("ok" => true, "formula" => formula,
+                                          "hints" => v["hints"])
+        end
+      rescue StandardError => e
+        push_nodes_status("ok" => false, "errors" => [e.message])
       end
 
       def functions_reference_html

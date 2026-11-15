@@ -83,7 +83,7 @@
 <body>
   <header>
     <span id="gtitle">Dependency Graph</span>
-    <span class="hint">drag node → node to wire &middot; click edge + Del to unlink &middot; click node to highlight</span>
+    <span class="hint">drag node → node to wire &middot; click edge + Del to unlink &middot; click node to highlight &middot; double-click node → node editor</span>
   </header>
   <div id="ghost"><div class="gmsg">Loading…</div></div>
   <div id="gtoast"></div>
@@ -238,6 +238,16 @@
           gn.addEventListener("click", function (ev) {
             ev.stopPropagation();
             highlight(gn.getAttribute("data-gp"));
+          });
+          gn.addEventListener("dblclick", function (ev) {
+            ev.stopPropagation();
+            var n = nodeById(gn.getAttribute("data-gp"));
+            if (n && !n.external && !n.virtual && cur.entityId) {
+              sketchup.gact(JSON.stringify({
+                op: "openNodes", entityId: cur.entityId,
+                name: gn.getAttribute("data-gp")
+              }));
+            }
           });
         });
 
