@@ -195,7 +195,8 @@ window.OpenDC = (function () {
     return '<div class="pedit" data-pedit="' + n + '">' +
       '<div class="full"><label>formula - type or click an attribute below to insert it</label>' +
       '<div class="fxedit">' +
-      '<input data-f="formula" class="fxsrc" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(p.formula || "") + '">' +
+      '<div class="fxed" contenteditable="true" spellcheck="false" autocapitalize="off"></div>' +
+      '<input type="hidden" data-f="formula" value="' + esc(p.formula || "") + '">' +
       '<div class="fxlist hidden"></div></div>' +
       paletteHtml(e, p) +
       '<div class="fxstatus"></div></div>' +
@@ -297,29 +298,46 @@ window.OpenDC = (function () {
       });
     });
 
-    // Formula builder: attribute/function chips insert at the caret (no
-    // hand-typed attr names -> no typos).
+    // Formula builder: mousedown (not click) keeps the caret inside the
+    // contenteditable so chips insert at the caret position.
     host.querySelectorAll(".fxchip[data-ins]").forEach(function (c) {
-      c.addEventListener("click", function () {
-        var input = c.closest(".pedit").querySelector('input[data-f="formula"]');
-        var ins = c.getAttribute("data-ins");
-        input.setRangeText(ins, input.selectionStart, input.selectionEnd, "end");
-        input.focus();
-        queueValidation(input);
+      c.addEventListener("mousedown", function (ev) {
+        ev.preventDefault();
+        var ed = c.closest(".pedit").querySelector(".fxed");
+        fxInsertToken(ed, c.getAttribute("data-ins"));
       });
     });
 
-    host.querySelectorAll('input[data-f="formula"]').forEach(function (inp) {
-      inp.addEventListener("input", function () {
-        fxShow(inp, fxCandidates(inp));
-        queueValidation(inp);
+    host.querySelectorAll(".fxed").forEach(function (ed) {
+      var hidden = ed.closest(".fxedit").querySelector('input[data-f="formula"]');
+      fxRender(ed, hidden.value, fxKnown(ed.closest(".card")));
+      ed.addEventListener("input", function () { fxSync(ed); });
+      ed.addEventListener("keydown", function (ev) {
+        if (fxKeyNav(ed, ev)) return;
+        if (ev.key === "Enter") ev.preventDefault(); // formulas are single-line
       });
-      inp.addEventListener("keydown", function (ev) { fxKeyNav(inp, ev); });
-      inp.addEventListener("blur", function () {
-        var box = inp.closest(".fxedit");
+      ed.addEventListener("paste", function (ev) {
+        ev.preventDefault();
+        var t = (ev.clipboardData || window.clipboardData).getData("text/plain") || "";
+        t = t.replace(/[\r\n]+/g, " ");
+        if (!document.execCommand("insertText", false, t)) {
+          var sel = window.getSelection();
+          if (sel.rangeCount && ed.contains(sel.anchorNode)) {
+            var r = sel.getRangeAt(0), tn = document.createTextNode(t);
+            r.deleteContents();
+            r.insertNode(tn);
+            fxCaretAfter(tn);
+          } else {
+            ed.appendChild(document.createTextNode(t));
+          }
+          fxSync(ed);
+        }
+      });
+      ed.addEventListener("blur", function () {
+        var box = ed.closest(".fxedit");
         setTimeout(function () { fxClose(box); }, 150);
       });
-      queueValidation(inp);
+      queueValidation(hidden);
     });
 
     host.querySelectorAll("[data-save]").forEach(function (btn) {
@@ -368,78 +386,187 @@ window.OpenDC = (function () {
     });
   }
 
-  /* ---------------- formula autocomplete ---------------- */
+  /* ---------------- formula pill editor (contenteditable) ---------------- */
+  // The fxed div holds a mix of plain text nodes and non-editable pill
+  // spans; a hidden input carries the serialized formula for Apply and
+  // server-side validation.
 
   var FX_KEYWORDS = { TRUE: 1, FALSE: 1, AND: 1, OR: 1, NOT: 1 };
-  var fxSel = 0;   // selected index in the open suggestion list
+  var fxSel = 0;    // selected index in the open suggestion list
   var fxItems = []; // current suggestions {label, insert, kind}
+  var fxRes = null; // caret context of the open suggestion list
 
   function fxEntity(card) {
     var eid = card.getAttribute("data-eid");
     return (state.entities || []).find(function (x) { return x.entityId === eid; }) || { params: [] };
   }
 
+  function fxKnown(card) {
+    var e = fxEntity(card);
+    var k = {};
+    ((e && e.params) || []).forEach(function (p) { k[p.name] = true; });
+    if (k.copies) k.copy = true;
+    return k;
+  }
+
+  function fxPillEl(kind, tok) {
+    var s = document.createElement("span");
+    s.className = "fxpill " + kind;
+    s.setAttribute("contenteditable", "false");
+    s.setAttribute("data-tok", tok);
+    s.textContent = tok;
+    return s;
+  }
+
+  // Tokenize a formula string into text / attr-pill / ref-pill segments.
+  // Mirrors the Ruby lexer: " opens strings, ' only follows digits (feet).
+  function fxTokens(src, known) {
+    var segs = [], i = 0, n = src.length;
+    function push(t, s) {
+      var last = segs[segs.length - 1];
+      if (t === "text" && last && last.t === "text") last.s += s;
+      else if (s !== "") segs.push({ t: t, s: s });
+    }
+    while (i < n) {
+      var c = src[i];
+      if (/[\d.]/.test(c)) {
+        var nm = /^[\d.]+[A-Za-z"']*/.exec(src.slice(i));
+        push("text", nm[0]);
+        i += nm[0].length;
+        continue;
+      }
+      if (c === '"') {
+        var j = i + 1;
+        while (j < n && src[j] !== '"') j++;
+        push("text", src.slice(i, Math.min(j + 1, n)));
+        i = j + (j < n ? 1 : 0);
+        continue;
+      }
+      var m = /^[A-Za-z_][A-Za-z0-9_]*(!\s*[A-Za-z_][A-Za-z0-9_]*)?/.exec(src.slice(i));
+      if (m) {
+        var tok = m[0];
+        if (tok.indexOf("!") !== -1) {
+          push("ref", tok.replace(/\s+/g, ""));
+        } else if (/^\s*\(/.test(src.slice(i + tok.length)) || FX_KEYWORDS[tok.toUpperCase()]) {
+          push("text", tok); // function name or keyword - plain text
+        } else if (known[tok.toLowerCase()]) {
+          push("attr", tok);
+        } else {
+          push("text", tok); // unknown identifier - plain; validation flags it
+        }
+        i += tok.length;
+        continue;
+      }
+      push("text", c);
+      i++;
+    }
+    return segs;
+  }
+
+  function fxRender(ed, src, known) {
+    ed.innerHTML = "";
+    fxTokens(src, known).forEach(function (seg) {
+      ed.appendChild(seg.t === "text" ? document.createTextNode(seg.s) : fxPillEl(seg.t, seg.s));
+    });
+  }
+
+  function fxSerialize(ed) {
+    var out = "";
+    ed.childNodes.forEach(function (nd) {
+      if (nd.nodeType === 3) out += nd.nodeValue;
+      else if (nd.nodeType === 1) {
+        out += nd.classList.contains("fxpill") ? nd.getAttribute("data-tok") : nd.textContent;
+      }
+    });
+    return out.replace(/ /g, " ");
+  }
+
+  function fxHidden(ed) {
+    return ed.closest(".fxedit").querySelector('input[data-f="formula"]');
+  }
+
+  function fxSync(ed) {
+    var hidden = fxHidden(ed);
+    hidden.value = fxSerialize(ed);
+    fxShow(ed, fxCandidates(ed));
+    queueValidation(hidden);
+  }
+
+  // Text before the caret inside the current text node. Tokens cannot span
+  // pills, so the containing text node holds the whole fragment.
+  function fxCaretText(ed) {
+    var sel = window.getSelection();
+    if (!sel.rangeCount || !ed.contains(sel.anchorNode)) return null;
+    var nd = sel.anchorNode, off = sel.anchorOffset;
+    if (nd.nodeType === 3) return { node: nd, upto: nd.nodeValue.slice(0, off) };
+    if (nd === ed) {
+      var k = off - 1;
+      while (k >= 0 && ed.childNodes[k].nodeType !== 3) k--;
+      if (k < 0) return null;
+      return { node: ed.childNodes[k], upto: ed.childNodes[k].nodeValue };
+    }
+    return null;
+  }
+
   // Candidate source for the token under the caret. A "scope!" prefix
   // switches the dictionary: global! -> model globals, parent!/node! ->
   // same-name attrs (best-effort; the panel can't see the parent context).
-  function fxCandidates(inp) {
-    var upto = inp.value.slice(0, inp.selectionStart);
+  function fxCandidates(ed) {
+    var empty = { items: [], frag: "", scope: null, node: null, upto: "" };
+    var ctx = fxCaretText(ed);
+    if (!ctx) return empty;
+    var upto = ctx.upto;
     var m = /[A-Za-z_][A-Za-z0-9_]*$/.exec(upto);
     var sm = /([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)?$/.exec(upto);
-    var e = fxEntity(inp.closest(".card"));
-    var items = [];
+    var e = fxEntity(ed.closest(".card"));
     var attrItems = (e.params || [])
       .filter(function (p) { return !p.internal; })
       .map(function (p) { return { label: p.name, insert: p.name, kind: "attr" }; });
 
     if (sm) {
       var scope = sm[1].toLowerCase(), frag = (sm[2] || "").toLowerCase();
-      if (scope === "global") {
-        items = (state.globals || []).map(function (g) {
-          return { label: g.name, insert: g.name, kind: "glob" };
-        });
-      } else {
-        items = attrItems.slice();
-      }
-      return { items: items.filter(function (i) { return i.label.toLowerCase().indexOf(frag) === 0; }),
-               frag: frag, scoped: true };
+      var pool = scope === "global"
+        ? (state.globals || []).map(function (g) { return { label: g.name, insert: g.name, kind: "glob" }; })
+        : attrItems.slice();
+      return { items: pool.filter(function (i) { return i.label.toLowerCase().indexOf(frag) === 0; }),
+               frag: frag, scope: scope, node: ctx.node, upto: upto };
     }
 
     var frag = m ? m[0] : "";
-    if (frag === "") return { items: [], frag: frag, scoped: false };
+    if (frag === "") return empty;
     var low = frag.toLowerCase();
-    items = attrItems;
+    var items = attrItems;
     (state.globals || []).forEach(function (g) {
       items.push({ label: "global!" + g.name, insert: "global!" + g.name, kind: "glob" });
     });
     FN_CHIPS.forEach(function (t) {
-      var name = t.replace(/\(.*/, "");
-      items.push({ label: name + "()", insert: t, kind: "fn" });
+      items.push({ label: t.replace(/\(.*/, "") + "()", insert: t, kind: "fn" });
     });
-    var box = inp.closest(".pedit");
+    var box = ed.closest(".pedit");
     if (box && box.getAttribute("data-pedit") === "onclick") {
       ACTION_CHIPS.forEach(function (t) {
-        var name = t.replace(/\(.*/, "");
-        items.push({ label: name + "()", insert: t, kind: "act" });
+        items.push({ label: t.replace(/\(.*/, "") + "()", insert: t, kind: "act" });
       });
     }
     if ((e.params || []).some(function (p) { return p.name === "copies"; }))
       items.push({ label: "copy", insert: "copy", kind: "attr" });
     return { items: items.filter(function (i) { return i.label.toLowerCase().indexOf(low) === 0; }),
-             frag: frag, scoped: false };
+             frag: frag, scope: null, node: ctx.node, upto: upto };
   }
 
   function fxClose(box) {
     var list = box && box.querySelector(".fxlist");
     if (list) list.classList.add("hidden");
     fxItems = [];
+    fxRes = null;
   }
 
-  function fxShow(inp, res) {
-    var box = inp.closest(".fxedit");
+  function fxShow(ed, res) {
+    var box = ed.closest(".fxedit");
     var list = box.querySelector(".fxlist");
     if (!res.items.length) { fxClose(box); return; }
     fxItems = res.items.slice(0, 9);
+    fxRes = res;
     fxSel = 0;
     list.innerHTML = fxItems.map(function (i, k) {
       return '<div class="fxitem" data-i="' + k + '">' +
@@ -449,7 +576,7 @@ window.OpenDC = (function () {
     list.querySelectorAll(".fxitem").forEach(function (it) {
       it.addEventListener("mousedown", function (ev) {
         ev.preventDefault();
-        fxAccept(inp, fxItems[+it.getAttribute("data-i")], res);
+        fxAccept(ed, fxItems[+it.getAttribute("data-i")]);
       });
     });
     list.classList.remove("hidden");
@@ -464,37 +591,61 @@ window.OpenDC = (function () {
     if (sel) sel.scrollIntoView({ block: "nearest" });
   }
 
-  function fxAccept(inp, item, res) {
-    // Replace the fragment under the caret (or the attr name after scope!).
-    var upto = inp.value.slice(0, inp.selectionStart);
-    var rest = inp.value.slice(inp.selectionStart);
-    var cut;
-    if (res.scoped) {
-      // "parent!si" -> replace frag; "parent!" (empty frag) -> append.
-      cut = /[A-Za-z_][A-Za-z0-9_]*$/.test(upto)
-        ? upto.replace(/[A-Za-z_][A-Za-z0-9_]*$/, item.insert)
-        : upto + item.insert;
-    } else {
-      cut = upto.replace(/[A-Za-z_][A-Za-z0-9_!]*$/, item.insert);
-    }
-    inp.value = cut + rest;
-    inp.selectionStart = inp.selectionEnd = cut.length;
-    inp.focus();
-    fxClose(inp.closest(".fxedit"));
-    queueValidation(inp);
+  function fxCaretAfter(node) {
+    var r = document.createRange();
+    r.setStartAfter(node);
+    r.collapse(true);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
   }
 
-  function fxKeyNav(inp, ev) {
-    var box = inp.closest(".fxedit");
+  // Replace the token/fragment under the caret with a pill (attrs, refs)
+  // or text (function/action templates).
+  function fxAccept(ed, item) {
+    var res = fxRes;
+    if (!res || !res.node || !res.node.parentNode) { fxClose(ed.closest(".fxedit")); return; }
+    var drop = res.frag.length + (res.scope ? res.scope.length + 1 : 0);
+    var r = document.createRange();
+    r.setStart(res.node, res.upto.length - drop);
+    r.setEnd(res.node, res.upto.length);
+    r.deleteContents();
+    var node = (item.kind === "attr")
+      ? fxPillEl("attr", item.insert)
+      : (item.kind === "glob")
+        ? fxPillEl("ref", res.scope ? res.scope + "!" + item.insert : item.insert)
+        : document.createTextNode(item.insert);
+    r.insertNode(node);
+    fxCaretAfter(node);
+    fxSync(ed);
+  }
+
+  // Insert a palette chip at the caret (or at the end when unfocused).
+  // Names -> attr pills, "scope!name" -> ref pills, templates -> text.
+  function fxInsertToken(ed, ins) {
+    var node = /!/i.test(ins) ? fxPillEl("ref", ins)
+      : /[()]/.test(ins) ? document.createTextNode(ins)
+      : fxPillEl("attr", ins);
+    var sel = window.getSelection();
+    if (sel.rangeCount && ed.contains(sel.anchorNode)) {
+      var r = sel.getRangeAt(0);
+      r.deleteContents();
+      r.insertNode(node);
+      fxCaretAfter(node);
+    } else {
+      ed.appendChild(node);
+    }
+    fxSync(ed);
+  }
+
+  function fxKeyNav(ed, ev) {
+    var box = ed.closest(".fxedit");
     var list = box && box.querySelector(".fxlist");
     if (!list || list.classList.contains("hidden")) return false;
     if (ev.key === "ArrowDown") { fxSel = Math.min(fxSel + 1, fxItems.length - 1); paintFxSel(list); }
     else if (ev.key === "ArrowUp") { fxSel = Math.max(fxSel - 1, 0); paintFxSel(list); }
-    else if (ev.key === "Enter" || ev.key === "Tab") {
-      var upto = inp.value.slice(0, inp.selectionStart);
-      var sm = /([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)?$/.exec(upto);
-      fxAccept(inp, fxItems[fxSel], { scoped: !!sm });
-    } else if (ev.key === "Escape") { fxClose(box); }
+    else if (ev.key === "Enter" || ev.key === "Tab") { fxAccept(ed, fxItems[fxSel]); }
+    else if (ev.key === "Escape") { fxClose(box); }
     else return false;
     ev.preventDefault();
     return true;
@@ -516,7 +667,8 @@ window.OpenDC = (function () {
     if (status) status.textContent = "";
     if (inp.value.trim() === "") {   // blank = remove formula: always fine
       fxValid[key] = true;
-      inp.classList.remove("invalid");
+      var ed0 = inp.closest(".fxedit") && inp.closest(".fxedit").querySelector(".fxed");
+      (ed0 || inp).classList.remove("invalid");
       return;
     }
     fxTimers[key] = setTimeout(function () {
@@ -538,7 +690,8 @@ window.OpenDC = (function () {
     var input = box.querySelector('input[data-f="formula"]');
     var status = box.querySelector(".fxstatus");
     fxValid[key] = msg.ok;
-    if (input) input.classList.toggle("invalid", !msg.ok);
+    var ed = box.querySelector(".fxed");
+    if (ed) ed.classList.toggle("invalid", !msg.ok);
     var parts = [];
     (msg.errors || []).forEach(function (e) {
       parts.push('<div class="bad">' + esc(e) + "</div>");
