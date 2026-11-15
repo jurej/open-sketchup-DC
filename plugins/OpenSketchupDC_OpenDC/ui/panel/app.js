@@ -176,9 +176,11 @@ window.OpenDC = (function () {
     var ph = p.mixed ? ' placeholder="<mixed>"' : "";
 
     if (p.access === "LIST" && p.optionsList && p.optionsList.length) {
-      return '<select' + data + '>' +
+      var cur = p.displayValue != null ? p.displayValue : p.value;
+      var mixedOpt = p.mixed ? '<option value="" disabled selected>&lt;mixed&gt;</option>' : "";
+      return '<select' + data + '>' + mixedOpt +
         p.optionsList.map(function (o) {
-          var sel = (String(o.value) === String(p.value)) ? " selected" : "";
+          var sel = (!p.mixed && String(o.value) === String(cur)) ? " selected" : "";
           return '<option value="' + esc(o.value) + '"' + sel + '>' + esc(o.label) + '</option>';
         }).join("") + '</select>';
     }
