@@ -61,13 +61,25 @@ module OpenSketchupDC
 
       def entity(id)
         e = @entity_map[id]
-        return e if e && begin
-          e.valid?
-        rescue StandardError
-          false
-        end
+        return e if valid_entity?(e)
 
-        nil
+        # SketchUp invalidates entity references across undo/redraw/model
+        # changes - re-resolve persistent ids to a live object when possible
+        if id.to_s.start_with?("p")
+          begin
+            e = Sketchup.active_model.find_entity_by_persistent_id(id[1..].to_i)
+          rescue StandardError
+            e = nil
+          end
+          @entity_map[id] = e if e
+        end
+        e
+      end
+
+      def valid_entity?(e)
+        e && e.valid?
+      rescue StandardError
+        false
       end
 
       def with_entity(id)
@@ -416,10 +428,11 @@ module OpenSketchupDC
       # handshake (gready) triggers the first data push after load.
       def cmd_graph(eid)
         with_entity(eid) do |ent|
-          ps = DCReader.read(ent, dict_name: DCReader.dict_name_for(ent), entity_id: eid)
+          @graph_eid = eid
           @graph_pending = {
             "label" => entity_label(ent),
-            "graph" => entity_graph(ps)
+            "entityId" => eid,
+            "graph" => entity_graph(read_graph_set(ent, eid))
           }
           if @graph_dialog.nil?
             @graph_dialog = ::UI::HtmlDialog.new(
@@ -437,6 +450,9 @@ module OpenSketchupDC
               @gqa = arg unless arg.to_s.empty? # dev/QA read-back channel
               push_graph
             end
+            @graph_dialog.add_action_callback("gact") do |_ctx, json|
+              graph_apply(JSON.parse(json.to_s))
+            end
             @graph_dialog.set_can_close do
               @graph_dialog = nil
               true
@@ -448,6 +464,42 @@ module OpenSketchupDC
             @graph_dialog.bring_to_front
           end
         end
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      def read_graph_set(ent, eid)
+        DCReader.read(ent, dict_name: DCReader.dict_name_for(ent), entity_id: eid)
+      end
+
+      # Formula edits coming from the graph window (wire/unlink). Same
+      # validation + undo + reevaluate path as the panel's formula field.
+      def graph_apply(data)
+        ent = entity(data["entityId"].to_s)
+        if ent.nil?
+          push_error("Entity no longer available (selection changed?)")
+          return
+        end
+
+        name = data["name"].to_s
+        formula = data["formula"].to_s
+        v = validate_formula(ent, formula, name) unless formula.strip.empty?
+        if v && !v["ok"]
+          push_error("Formula not saved: #{v['errors'].join('; ')}")
+          return
+        end
+        dict_name = DCReader.dict_name_for(ent)
+        Helpers.undo_wrap(Sketchup.active_model, "Open DC: Wire #{name}") do
+          DCWriter.set_meta(ent, name, "formula", formula, dict_name: dict_name)
+        end
+        reevaluate(ent, dict_name)
+        push_state
+        @graph_pending = {
+          "label" => entity_label(ent),
+          "entityId" => data["entityId"].to_s,
+          "graph" => entity_graph(read_graph_set(ent, data["entityId"].to_s))
+        }
+        push_graph
       rescue StandardError => e
         push_error(e.message)
       end
@@ -605,16 +657,50 @@ module OpenSketchupDC
         end
         extdeps.each_key { |n| used[n] = true }
         cyclic.each { |n| used[n] = true }
+        # editable graph: non-internal params stay visible as wire targets
+        # even when they have no edges yet
+        names.each { |n| used[n] = true unless ps[n]&.internal }
 
         nodes = names.select { |n| used[n] }.map do |n|
-          { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n) }
+          { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n),
+            "formula" => ps[n]&.formula, "hasFormula" => !(ps[n]&.formula.to_s.empty?) }
         end
         virtual = (used.keys - names).map { |n| { "id" => n, "virtual" => true } }
         extnodes = extdeps.values.flatten.uniq.map { |id| { "id" => id, "external" => true } }
         edges = []
-        deps.each { |n, ds| ds.each { |d| edges << { "from" => d, "to" => n } } }
-        extdeps.each { |n, ids| ids.uniq.each { |id| edges << { "from" => id, "to" => n } } }
+        deps.each do |n, ds|
+          ds.each do |d|
+            edges << { "from" => d, "to" => n, "literal" => edge_literal(ps[d], ps[n]) }
+          end
+        end
+        extdeps.each do |n, ids|
+          ids.uniq.each { |id| edges << { "from" => id, "to" => n, "literal" => "0" } }
+        end
         { "nodes" => nodes | extnodes | virtual, "edges" => edges.uniq }
+      end
+
+      # Value literal used when an edge is unlinked: the dep's current value
+      # expressed in the DEPENDENT's formula units (bare numbers inside a
+      # formula are interpreted in _<name>_formulaunits). Non-numeric values
+      # become quoted strings; unknown (builtin w/o key, external) -> "0".
+      def edge_literal(dep_p, target_p)
+        return "0" if dep_p.nil?
+
+        v = dep_p.value
+        return "0" if v.nil?
+
+        n = v.is_a?(Numeric) ? v : begin
+          Float(v.to_s.strip)
+        rescue StandardError
+          nil
+        end
+        if n
+          tu = target_p&.formulaunits.to_s.empty? ? target_p&.units : target_p.formulaunits
+          n = Param.inches_to_unit(n, tu) if Param.length_unit?(tu)
+          n.round(6).to_s
+        else
+          %("#{v.to_s.gsub('"', "")}")
+        end
       end
 
       def global_params(model)

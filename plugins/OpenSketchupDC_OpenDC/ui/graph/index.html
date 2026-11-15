@@ -26,7 +26,7 @@
     .gmsg { color: var(--muted); padding: 20px; }
     .gscroll { overflow: auto; padding: 4px; }
     .depgraph { display: block; margin: 4px; }
-    .gnode { cursor: pointer; }
+    .gnode { cursor: grab; }
     .gnode rect { fill: var(--bg3); stroke: var(--border); stroke-width: 1; }
     .gnode:hover rect { stroke: var(--accent); }
     .gnode text {
@@ -41,63 +41,298 @@
     .gnode.cyclic rect { stroke: var(--error); fill: rgba(230, 100, 100, .12); }
     .gnode.cyclic text { fill: var(--error); }
     .gnode.dimmed { opacity: .35; }
+    .gnode.dropok rect { stroke: var(--accent2); stroke-width: 2; }
+    .gnode.dropbad rect { stroke: var(--error); stroke-width: 2; }
     .gedge {
       fill: none; stroke: var(--muted); stroke-width: 1.2;
-      opacity: .4; marker-end: url(#garr);
+      opacity: .4; marker-end: url(#garr); cursor: pointer;
     }
     .gedge.lit { stroke: var(--accent); opacity: 1; stroke-width: 1.6; }
+    .gedge.sel { stroke: var(--accent2); opacity: 1; stroke-width: 2; }
     .gedge.dimmed { opacity: .12; }
+    .gedge.drag { stroke: var(--accent2); opacity: .9; stroke-dasharray: 5 3;
+      marker-end: url(#garr); pointer-events: none; }
     .garr { fill: var(--muted); opacity: .4; }
+    #gtoast {
+      position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 12px; font-size: 12px;
+      color: var(--fg); opacity: 0; transition: opacity .2s; z-index: 20;
+      pointer-events: none; max-width: 90%;
+    }
+    #gtoast.show { opacity: 1; }
+    #gtoast.err { border-color: var(--error); color: var(--error); }
+    #gconfirm {
+      position: fixed; inset: 0; background: rgba(0,0,0,.5);
+      display: none; align-items: center; justify-content: center; z-index: 30;
+    }
+    #gconfirm.show { display: flex; }
+    .gdialog {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 16px; max-width: 320px;
+    }
+    .gdialog p { margin: 0 0 12px; }
+    .gdialog .btns { display: flex; gap: 8px; justify-content: flex-end; }
+    .gdialog button {
+      background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
+      border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 12px;
+    }
+    .gdialog button.primary { border-color: var(--accent); color: var(--accent); }
   </style>
 </head>
 <body>
   <header>
     <span id="gtitle">Dependency Graph</span>
-    <span class="hint">click a node to highlight its connections</span>
+    <span class="hint">drag node → node to wire &middot; click edge + Del to unlink &middot; click node to highlight</span>
   </header>
   <div id="ghost"><div class="gmsg">Loading…</div></div>
+  <div id="gtoast"></div>
+  <div id="gconfirm"><div class="gdialog">
+    <p id="gctext"></p>
+    <div class="btns">
+      <button id="gccancel">Cancel</button>
+      <button id="gcok" class="primary">Replace</button>
+    </div>
+  </div></div>
   <script src="graph.js"></script>
   <script>
     (function () {
       var host = document.getElementById("ghost");
+      var toastEl = document.getElementById("gtoast");
+      var confirmEl = document.getElementById("gconfirm");
+      var cur = null;           // latest payload {label, entityId, graph}
+      var selEdge = null;       // selected edge {from,to}
+      var toastTimer = null;
+      var confirmCb = null;
 
+      function toast(msg, isErr) {
+        toastEl.textContent = msg;
+        toastEl.className = "show" + (isErr ? " err" : "");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { toastEl.className = ""; }, 2600);
+      }
+
+      function applyFormula(name, formula) {
+        sketchup.gact(JSON.stringify({
+          entityId: cur.entityId, name: name, formula: formula
+        }));
+      }
+
+      // ---- wiring ---------------------------------------------------
+      function nodeById(id) {
+        return (cur.graph.nodes || []).find(function (n) { return n.id === id; });
+      }
+
+      // Would wiring from->to close a dependency cycle? Only if 'to'
+      // already reaches 'from' transitively.
+      function createsCycle(from, to) {
+        var map = {};
+        cur.graph.edges.forEach(function (e) {
+          (map[e.from] = map[e.from] || []).push(e.to);
+        });
+        var seen = {}, stack = [to];
+        while (stack.length) {
+          var n = stack.pop();
+          if (n === from) return true;
+          if (!seen[n]) {
+            seen[n] = true;
+            (map[n] || []).forEach(function (m) { stack.push(m); });
+          }
+        }
+        return false;
+      }
+
+      function wire(from, to) {
+        if (from === to) return;
+        var t = nodeById(to);
+        if (!t) return;
+        if (t.external || t.virtual) {
+          toast("'" + to + "' is external/builtin - it can't take a formula", true);
+          return;
+        }
+        if (createsCycle(from, to)) {
+          toast("Wiring " + from + " -> " + to + " would create a cycle", true);
+          return;
+        }
+        if (t.hasFormula) {
+          askConfirm(
+            "Replace formula of '" + to + "' with '" + from + "'?",
+            function () { applyFormula(to, from); }
+          );
+        } else {
+          applyFormula(to, from);
+        }
+      }
+
+      function askConfirm(text, cb) {
+        document.getElementById("gctext").textContent = text;
+        confirmEl.classList.add("show");
+        confirmCb = cb;
+      }
+      document.getElementById("gcok").addEventListener("click", function () {
+        confirmEl.classList.remove("show");
+        if (confirmCb) confirmCb();
+        confirmCb = null;
+      });
+      document.getElementById("gccancel").addEventListener("click", function () {
+        confirmEl.classList.remove("show");
+        confirmCb = null;
+      });
+
+      // ---- unlink (edge delete = substitute literal value) ----------
+      // Replace CURRENT("name")-style calls first (the ref lives inside a
+      // string literal), then bare identifiers outside quoted strings.
+      function unlinkFormula(formula, refId, literal) {
+        var f = formula;
+        if (refId.indexOf("!") < 0) {
+          f = f.replace(new RegExp(
+            '(CURRENT|OPTIONINDEX|OPTIONVALUE)\\(\\s*"' + refId + '"\\s*\\)', "gi"),
+            literal);
+        }
+        var pat = refId.replace(/[.*+?^${}()|[\]\\!]/g, "\\$&");
+        var re = new RegExp("\\b" + pat + "\\b", "gi");
+        var parts = f.split('"'); // odd indexes are inside strings
+        return parts.map(function (p, i) {
+          return i % 2 ? p : p.replace(re, literal);
+        }).join('"');
+      }
+
+      function unlinkEdge(edge) {
+        var t = nodeById(edge.to);
+        if (!t || !t.formula) return;
+        var nf = unlinkFormula(t.formula, edge.from, edge.literal || "0");
+        applyFormula(edge.to, nf);
+        toast("Unlinked " + edge.from + " -> " + edge.to +
+              " (replaced by " + (edge.literal || "0") + ")");
+      }
+
+      // ---- highlight -------------------------------------------------
+      function highlight(name) {
+        var lit = {};
+        host.querySelectorAll(".gedge").forEach(function (p) {
+          var hit = name && (p.getAttribute("data-f") === name ||
+                             p.getAttribute("data-t") === name);
+          p.classList.toggle("lit", !!hit);
+          if (hit) {
+            lit[p.getAttribute("data-f")] = true;
+            lit[p.getAttribute("data-t")] = true;
+          }
+        });
+        host.querySelectorAll(".gnode").forEach(function (g) {
+          g.classList.toggle("dimmed", !!(name && !lit[g.getAttribute("data-gp")]));
+        });
+      }
+
+      // ---- render + interactions ------------------------------------
       window.renderGraph = function (data) {
+        cur = data;
+        selEdge = null;
         document.getElementById("gtitle").textContent =
-          (data.label || "") + " — dependencies";
+          (data.label || "") + " - dependencies";
         host.innerHTML = OpenDCGraph.render(data.graph);
+        var svg = host.querySelector("svg");
+        if (!svg) return;
+        var NW = 132, NH = 26;
+
         host.querySelectorAll(".gnode").forEach(function (gn) {
           gn.addEventListener("click", function (ev) {
             ev.stopPropagation();
             highlight(gn.getAttribute("data-gp"));
           });
         });
-        host.addEventListener("click", function () { highlight(null); });
+
+        // edge select
+        host.querySelectorAll(".gedge").forEach(function (p) {
+          p.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            host.querySelectorAll(".gedge.sel").forEach(function (q) {
+              q.classList.remove("sel");
+            });
+            p.classList.add("sel");
+            selEdge = { from: p.getAttribute("data-f"), to: p.getAttribute("data-t") };
+            toast("edge " + selEdge.from + " -> " + selEdge.to +
+                  " - press Del to unlink");
+          });
+        });
+        host.addEventListener("click", function () {
+          selEdge = null;
+          host.querySelectorAll(".gedge.sel").forEach(function (q) {
+            q.classList.remove("sel");
+          });
+          highlight(null);
+        });
+
+        // ---- drag-to-wire -------------------------------------------
+        var drag = null, tmp = null;
+        function svgPoint(ev) {
+          var r = svg.getBoundingClientRect();
+          var vb = svg.viewBox.baseVal;
+          return {
+            x: vb.x + (ev.clientX - r.left) * (vb.width / r.width),
+            y: vb.y + (ev.clientY - r.top) * (vb.height / r.height)
+          };
+        }
+        svg.addEventListener("mousedown", function (ev) {
+          var gn = ev.target.closest(".gnode");
+          if (!gn) return;
+          drag = { from: gn.getAttribute("data-gp"), sx: ev.clientX, sy: ev.clientY,
+                   moved: false, over: null };
+        });
+        window.addEventListener("mousemove", function (ev) {
+          if (!drag) return;
+          if (!drag.moved &&
+              Math.hypot(ev.clientX - drag.sx, ev.clientY - drag.sy) < 5) return;
+          drag.moved = true;
+          if (!tmp) {
+            tmp = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            tmp.setAttribute("class", "gedge drag");
+            svg.appendChild(tmp);
+          }
+          var src = svg.querySelector('[data-gp="' + drag.from + '"]');
+          var tr = src.getAttribute("transform").match(/translate\(([-\d.]+),([-\d.]+)\)/);
+          var x1 = parseFloat(tr[1]) + NW, y1 = parseFloat(tr[2]) + NH / 2;
+          var p = svgPoint(ev), mx = (x1 + p.x) / 2;
+          tmp.setAttribute("d", "M" + x1 + " " + y1 + " C" + mx + " " + y1 +
+            " " + mx + " " + p.y + " " + p.x + " " + p.y);
+          // hover feedback on candidate target
+          var el = document.elementFromPoint(ev.clientX, ev.clientY);
+          var t = el && el.closest ? el.closest(".gnode") : null;
+          var tid = t ? t.getAttribute("data-gp") : null;
+          if (tid !== drag.over) {
+            host.querySelectorAll(".gnode.dropok,.gnode.dropbad").forEach(function (g) {
+              g.classList.remove("dropok"); g.classList.remove("dropbad");
+            });
+            drag.over = tid;
+            if (tid && tid !== drag.from) {
+              var tn = nodeById(tid);
+              var bad = !tn || tn.external || tn.virtual || createsCycle(drag.from, tid);
+              t.classList.add(bad ? "dropbad" : "dropok");
+            }
+          }
+        });
+        window.addEventListener("mouseup", function (ev) {
+          if (!drag) return;
+          var d = drag; drag = null;
+          if (tmp) { tmp.remove(); tmp = null; }
+          host.querySelectorAll(".gnode.dropok,.gnode.dropbad").forEach(function (g) {
+            g.classList.remove("dropok"); g.classList.remove("dropbad");
+          });
+          if (!d.moved) return; // plain click - handled by click listener
+          var el = document.elementFromPoint(ev.clientX, ev.clientY);
+          var t = el && el.closest ? el.closest(".gnode") : null;
+          if (t) wire(d.from, t.getAttribute("data-gp"));
+        });
       };
 
-      // Highlight the node's direct deps + dependents; dim the rest.
-      function highlight(name) {
-        var lit = {};
-        if (name) {
-          lit[name] = true;
-          host.querySelectorAll(".gedge").forEach(function (p) {
-            var hit = p.getAttribute("data-f") === name ||
-                      p.getAttribute("data-t") === name;
-            p.classList.toggle("lit", hit);
-            p.classList.toggle("dimmed", !hit);
-            if (hit) {
-              lit[p.getAttribute("data-f")] = true;
-              lit[p.getAttribute("data-t")] = true;
-            }
+      document.addEventListener("keydown", function (ev) {
+        if ((ev.key === "Delete" || ev.key === "Backspace") && selEdge && cur) {
+          var e2 = cur.graph.edges.find(function (x) {
+            return x.from === selEdge.from && x.to === selEdge.to;
           });
-        } else {
-          host.querySelectorAll(".gedge").forEach(function (p) {
-            p.classList.remove("lit"); p.classList.remove("dimmed");
-          });
+          if (e2) unlinkEdge(e2);
+          selEdge = null;
         }
-        host.querySelectorAll(".gnode").forEach(function (g) {
-          g.classList.toggle("dimmed", !!(name && !lit[g.getAttribute("data-gp")]));
-        });
-      }
+      });
 
       if (window.sketchup && sketchup.gready) sketchup.gready("");
     })();
