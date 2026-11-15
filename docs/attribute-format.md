@@ -55,8 +55,13 @@ Write rules that work against Trimble's engine (verified):
 - Instance dicts otherwise hold only engine-written computed caches of
   formula attrs (`sirina`, `visina`, ...).
 - Booleans must be strings (`"FALSE"`); the engine crashes on Ruby `false`.
-- Formulas are stored **HTML-escaped** (`&quot;`, `&amp;`). `DCReader`
-  unescapes on read; `DCWriter` re-escapes on classic writes.
+- Formulas escape **only** `"` → `&quot;` on write. `&`, `<`, `>` must be
+  stored **raw** — verified by live redraw: storing `&amp;`/`&lt;`/`&gt;`
+  makes DC evaluate the literal `amp;`/`lt;`/`gt;` text and error
+  (`<span class=subformula-error>` spans in `_<name>_error`), while raw
+  `sirina&"/"&visina` and `sirina&&quot;/&quot;&visina` both evaluate
+  correctly. `DCReader` still decodes the full entity set on read
+  (`&amp;` last) so foreign-written formulas display cleanly.
 - Bare numbers in the formula slot are evaluated in the attr's
   `_<name>_units` context, **not** inches (verified: `"35.43"` with
   `_lenx_units="CENTIMETERS"` produced 35.43 cm / 13.95"). The panel

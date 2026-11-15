@@ -127,8 +127,11 @@ module OpenSketchupDC
         end.join("&")
       end
 
-      # Classic DC HTML-escapes stored formulas: &quot; &amp; &lt; &gt;.
-      # &amp; must decode last so &amp;quot; stays literal (one-pass semantics).
+      # Classic DC formula storage: only &quot; is unescaped when DC reads a
+      # _<name>_formula slot. &amp; / &lt; / &gt; are treated as literal text
+      # and break evaluation (verified by live redraw). On READ we decode the
+      # whole entity set anyway - &amp; last - so previously double-escaped or
+      # foreign-written formulas still display and can be re-saved raw.
       def self.unescape_html(v)
         return v unless v.is_a?(String) && v.include?("&")
 
@@ -137,11 +140,13 @@ module OpenSketchupDC
          .gsub("&amp;", "&")
       end
 
+      # Write-side counterpart: escape ONLY the double-quote. Storing & as
+      # &amp; (or <> as &lt;/&gt;) makes DC evaluate the literal "amp;"/"lt;"
+      # text and error; & and <> must be stored raw.
       def self.escape_html(v)
         return v unless v.is_a?(String)
 
-        v.gsub("&", "&amp;").gsub('"', "&quot;")
-         .gsub(">", "&gt;").gsub("<", "&lt;")
+        v.gsub('"', "&quot;")
       end
 
       # _<attr>_error holds eval status, often as an HTML span such as

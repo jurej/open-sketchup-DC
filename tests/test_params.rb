@@ -95,8 +95,13 @@ class TestParams < Minitest::Test
     raw = "if(CURRENT(&quot;RotZ&quot;)=-180,&quot;Desno&quot;,&quot;Levo&quot;)"
     assert_equal 'if(CURRENT("RotZ")=-180,"Desno","Levo")',
                  DC::Param.unescape_html(raw)
-    assert_equal "&quot;a&quot; &amp; &quot;b&quot;",
+    # write-side: only " is escaped - &, <, > must stay raw or DC errors
+    assert_equal "&quot;a&quot; & &quot;b&quot;",
                  DC::Param.escape_html('"a" & "b"')
+    assert_equal 'sirina&&quot;/&quot;&visina',
+                 DC::Param.escape_html('sirina&"/"&visina')
+    assert_equal "if(a<b)",
+                 DC::Param.escape_html("if(a<b)") # < stays raw
     # one-pass semantics: &amp;quot; decodes to literal &quot;
     assert_equal "&quot;", DC::Param.unescape_html("&amp;quot;")
   end
