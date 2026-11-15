@@ -34,20 +34,49 @@ Keys are always lowercase. Underscore-prefixed keys are meta/system fields.
 
 ### Authoritative input vs computed cache (verified, SketchUp 2026)
 
-For the classic format, `_<name>_formula` is the **authoritative user
-input** — not just for `=expr` formulas but for every editable value.
-`<name>` is only the engine's computed cache:
+Two storage styles coexist in real components:
 
-- Typing `5` in Component Options stores `"5"` (or `"5.0"`) in
-  `_lenx_formula`; redraw evaluates it and writes `lenx = "5"` as cache.
-- Writing `<name>` directly has no lasting effect — the next redraw
-  overwrites it from `_<name>_formula`.
-- String values are stored bare in the formula slot (`Red`, not `"Red"`);
-  the evaluator treats unquoted words as string literals.
-- Booleans must be strings (`"FALSE"`); Trimble's engine crashes
-  (`to_f` on `false`) if a Ruby boolean lands in `hidden`.
-- Per-instance overrides are `_<name>_formula` on the **instance** dict
-  (siblings keep their own values — verified).
+- **Literal attrs** (e.g. `lenx` on a TEXTBOX-editable size): plain `<name>`
+  holds the user input; **no** `_<name>_formula` key exists.
+- **Formula attrs** (e.g. `sirina`): `_<name>_formula` is authoritative;
+  `<name>` is only the engine's computed cache.
+
+Write rules that work against Trimble's engine (verified):
+
+- Writing `_<name>_formula` works in both cases — the engine treats the
+  formula slot as user input even when none existed before, and evaluates
+  bare literals (`"39.37"`, `"Red"`) and strings fine. `DCWriter.set_value`
+  therefore always targets `_<name>_formula` for the classic dict.
+- Writing plain `<name>` on a def is picked up **only** via the engine's
+  own deferred observer redraw (idle-time) — not reliably immediate.
+- Writing plain `<name>` or `_inst_<name>` on an **instance** dict is
+  ignored for literals — per-instance overrides only work through the
+  `_<name>_formula` slot (verified: sibling instances keep own values).
+- Instance dicts otherwise hold only engine-written computed caches of
+  formula attrs (`sirina`, `visina`, ...).
+- Booleans must be strings (`"FALSE"`); the engine crashes on Ruby `false`.
+- Formulas are stored **HTML-escaped** (`&quot;`, `&amp;`). `DCReader`
+  unescapes on read; `DCWriter` re-escapes on classic writes.
+
+### `_<name>_error` = eval status slot
+
+Holds the last formula eval result, either a plain value or an HTML span
+(`<span class=subformula-success>80.0</span>` /
+`subformula-error`). `DCReader` strips markup and suppresses
+success/numeric results — only real errors reach the UI.
+
+### The `""` (unnamed) dictionary
+
+Instances also carry a nameless dictionary holding `_last_lenx/y/z` —
+the engine's record of last-applied sizes (scale-change detection).
+
+### `""` deferred redraw + options encoding
+
+- DC's own EntityObservers trigger a deferred recalc at idle; explicit
+  `redraw_with_undo` is still needed for immediate geometry updates and
+  works for formula-slot writes.
+- LIST `_<name>_options` may have stray `&`s:
+  `"&2-slojno=2&3-slojno=3&"` — empty pairs are skipped when parsing.
 
 ### Nested component instance (inside a DC)
 

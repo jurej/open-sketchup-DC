@@ -21,13 +21,13 @@ module OpenSketchupDC
 
       def set_value(entity, name, value, dict_name: DC_DICT)
         key = value_key(name, dict_name)
-        value = value.to_s if dict_name == DC_DICT
+        value = Param.escape_html(value.to_s) if dict_name == DC_DICT
         entity.set_attribute(dict_name, key, value)
       end
 
       def set_default(entity, name, value, dict_name: DC_DICT)
         key = value_key(name, dict_name)
-        value = value.to_s if dict_name == DC_DICT
+        value = Param.escape_html(value.to_s) if dict_name == DC_DICT
         owner_for(entity).set_attribute(dict_name, key, value)
       end
 
@@ -37,6 +37,7 @@ module OpenSketchupDC
       end
 
       def set_meta(entity, name, field, value, dict_name: DC_DICT)
+        value = Param.escape_html(value) if dict_name == DC_DICT && field.to_s == "formula"
         owner_for(entity).set_attribute(dict_name, "_#{name.to_s.downcase}_#{field}", value)
       end
 

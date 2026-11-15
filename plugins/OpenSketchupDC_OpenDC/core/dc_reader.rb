@@ -141,13 +141,29 @@ module OpenSketchupDC
                   default: default,
                   label: meta["label"],
                   formlabel: meta["formlabel"],
-                  formula: meta["formula"],
+                  formula: Param.unescape_html(meta["formula"]),
                   formulaunits: meta["formulaunits"],
                   access: meta["access"],
                   options: meta["options"],
                   units: meta["units"],
                   overridden: kind == :component && !override.nil? && override != default,
-                  error: dict_get(base, "_#{name}_error"))
+                  error: param_error(base, name))
+      end
+
+      # _<attr>_error stores the last formula-eval status: an HTML span
+      # (<span class=subformula-success>80.0</span>), a plain evaluated result,
+      # or a real error message. Only genuine errors surface to the UI.
+      def param_error(dict, name)
+        raw = dict_get(dict, "_#{name}_error")
+        return nil if raw.nil?
+
+        s = raw.to_s
+        return nil if s.include?("subformula-success")
+
+        stripped = Param.strip_markup(s)
+        return nil if stripped.empty? || stripped =~ /\A-?[\d.]+(?:e[+-]?\d+)?\z/i
+
+        stripped
       end
 
       # Entity-level metadata (leading-underscore keys) exposed read-only.

@@ -90,4 +90,49 @@ class TestParams < Minitest::Test
     assert_equal false, shared[0]["mixed"]
     assert_equal 1.0, shared[0]["value"]
   end
+
+  def test_html_unescape_escape
+    raw = "if(CURRENT(&quot;RotZ&quot;)=-180,&quot;Desno&quot;,&quot;Levo&quot;)"
+    assert_equal 'if(CURRENT("RotZ")=-180,"Desno","Levo")',
+                 DC::Param.unescape_html(raw)
+    assert_equal "&quot;a&quot; &amp; &quot;b&quot;",
+                 DC::Param.escape_html('"a" & "b"')
+    # one-pass semantics: &amp;quot; decodes to literal &quot;
+    assert_equal "&quot;", DC::Param.unescape_html("&amp;quot;")
+  end
+
+  def test_error_markup_strip_and_success_filtered
+    dict = { "sirina" => 38.9, "_sirina_access" => "NONE",
+             "_sirina_error" => "<span class=subformula-success>80.0</span>" }
+    ps = R.build(nil, dict, kind: :group)
+    assert_nil ps["sirina"].error
+
+    dict2 = { "sirina" => 38.9, "_sirina_access" => "NONE",
+              "_sirina_error" => "<span class=subformula-error>syntax error</span>" }
+    ps2 = R.build(nil, dict2, kind: :group)
+    assert_equal "syntax error", ps2["sirina"].error
+  end
+
+  def test_display_value_units
+    p = DC::Param.new("lenx", value: "31.496062992125985", units: "CENTIMETERS")
+    assert_in_delta 80.0, p.display_value, 0.001
+
+    mm = DC::Param.new("d", value: 1.0, units: "MILLIMETERS")
+    assert_in_delta 25.4, mm.display_value, 1e-9
+
+    str = DC::Param.new("name", value: "abc", units: "STRING")
+    assert_equal "abc", str.display_value
+
+    assert_in_delta 31.496, DC::Param.unit_to_inches(80.0, "CENTIMETERS"), 0.001
+    assert_in_delta 80.0, DC::Param.inches_to_unit(31.496, "CENTIMETERS"), 0.001
+    assert(DC::Param.length_unit?("CENTIMETERS"))
+    refute(DC::Param.length_unit?("STRING"))
+  end
+
+  def test_options_stray_ampersands
+    p = DC::Param.new("s", options: "&2-slojno=2&3-slojno=3&")
+    assert_equal [{ "label" => "2-slojno", "value" => "2" },
+                  { "label" => "3-slojno", "value" => "3" }],
+                 p.parsed_options
+  end
 end

@@ -131,7 +131,7 @@ window.OpenDC = (function () {
       (p.overridden ? ' <span class="formula-hint">*</span>' : '') +
       '</span>' +
       '<span>' + (p.access === "VIEW" || p.internal
-        ? '<span class="ro">' + esc(fmt(p.value)) + '</span>'
+        ? '<span class="ro">' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '</span>'
         : inputFor(p, e.entityId)) + '</span>' +
       '<span>' +
       (advanced && !p.internal
@@ -182,7 +182,7 @@ window.OpenDC = (function () {
           return '<option value="' + esc(o.value) + '"' + sel + '>' + esc(o.label) + '</option>';
         }).join("") + '</select>';
     }
-    return '<input type="text" value="' + esc(fmt(p.value)) + '"' + data + ph + '>';
+    return '<input type="text" value="' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '"' + data + ph + '>';
   }
 
   function addFormHtml(e) {
