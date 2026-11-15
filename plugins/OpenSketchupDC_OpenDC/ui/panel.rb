@@ -91,6 +91,7 @@ module OpenSketchupDC
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
+        when "qaEcho"        then @qa_last = p["r"] # dev/QA read-back channel
         when "convert" then with_entity(p["entityId"]) do |e|
           Convert.to_open_dc(e)
           push_state
@@ -496,6 +497,7 @@ module OpenSketchupDC
             h = ps.to_h
             h["label"] = entity_label(ts[i])
             h["engine"] = ps.engine.to_s
+            h["graph"] = entity_graph(ps)
             h
           end,
           "batch" => batch_state(sets)
@@ -506,6 +508,59 @@ module OpenSketchupDC
         return nil if sets.length < 2
 
         { "count" => sets.length, "shared" => Selection.shared_params(sets) }
+      end
+
+      # Read-only dependency graph for the Graph tab: nodes are params plus
+      # external (scope!) references and builtin refs without keys; edges
+      # point dep -> dependent (data flow). Levels are longest-path depth
+      # for the column layout.
+      def entity_graph(ps)
+        names = ps.params.map(&:name)
+        known = names | DCReader::BUILTIN_ATTRS.map(&:downcase)
+        deps = {} # param name => [local dep names]
+        extdeps = {} # param name => [external node ids]
+        ps.params.each do |p|
+          next if p.formula.to_s.empty?
+
+          locals = []
+          Expression.refs(p.formula).each do |scope, n|
+            n = n.to_s.downcase
+            if scope.nil?
+              locals << n if known.include?(n)
+            else
+              (extdeps[p.name] ||= []) << "#{scope}!#{n}"
+            end
+          end
+          deps[p.name] = locals.uniq
+        end
+
+        g = Graph.new
+        names.each { |n| g.add(n, deps[n] || []) }
+        ordered, cyclic = g.order
+        level = {}
+        ordered.each do |k|
+          ds = deps[k] || []
+          level[k] = ds.empty? ? 0 : ds.map { |d| level[d] || 0 }.max + 1
+        end
+
+        used = {}
+        deps.each do |n, ds|
+          next if ds.empty?
+          used[n] = true
+          ds.each { |d| used[d] = true }
+        end
+        extdeps.each_key { |n| used[n] = true }
+        cyclic.each { |n| used[n] = true }
+
+        nodes = names.select { |n| used[n] }.map do |n|
+          { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n) }
+        end
+        virtual = (used.keys - names).map { |n| { "id" => n, "virtual" => true } }
+        extnodes = extdeps.values.flatten.uniq.map { |id| { "id" => id, "external" => true } }
+        edges = []
+        deps.each { |n, ds| ds.each { |d| edges << { "from" => d, "to" => n } } }
+        extdeps.each { |n, ids| ids.uniq.each { |id| edges << { "from" => id, "to" => n } } }
+        { "nodes" => nodes | extnodes | virtual, "edges" => edges.uniq }
       end
 
       def global_params(model)
