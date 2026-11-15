@@ -25,10 +25,12 @@ module OpenSketchupDC
         entity.set_attribute(dict_name, key, value)
       end
 
+      # Default edits always write the literal <name> slot on the owner dict.
+      # A formula-backed attr has no separate default input (the formula is
+      # the input) - writing the formula slot here would replace the user's
+      # formula with an evaluated constant.
       def set_default(entity, name, value, dict_name: DC_DICT)
-        key = value_key(name, dict_name)
-        value = Param.escape_html(value.to_s) if dict_name == DC_DICT
-        owner_for(entity).set_attribute(dict_name, key, value)
+        owner_for(entity).set_attribute(dict_name, name.to_s.downcase, value.to_s)
       end
 
       # Authoritative storage slot for user-entered values per engine.

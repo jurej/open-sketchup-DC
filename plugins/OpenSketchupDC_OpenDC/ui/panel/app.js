@@ -198,7 +198,9 @@ window.OpenDC = (function () {
       '<input data-f="formula" class="fxsrc" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(p.formula || "") + '"></div>' +
       paletteHtml(e, p) +
       '<div class="fxstatus"></div></div>' +
-      '<div><label>default</label><input data-f="default" value="' + esc(fmt(p["default"])) + '"></div>' +
+      '<div><label>default' + (p.formula ? " (formula-driven)" : "") + '</label>' +
+      '<input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
+      (p.formula ? " disabled" : "") + '></div>' +
       '<div><label>access</label><select data-f="access">' +
       ["NONE", "VIEW", "TEXTBOX", "LIST"].map(function (a) {
         return '<option' + (p.access === a ? " selected" : "") + '>' + a + '</option>';
@@ -329,6 +331,7 @@ window.OpenDC = (function () {
         }
         // default -> definition, other fields -> meta
         box.querySelectorAll("[data-f]").forEach(function (f) {
+          if (f.disabled) return;
           var field = f.getAttribute("data-f");
           if (field === "default") {
             send("setDefault", { entityId: eid, name: name, value: f.value });

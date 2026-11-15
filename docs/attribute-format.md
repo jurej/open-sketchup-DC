@@ -121,7 +121,7 @@ Model-level globals for `global!name` references live on the model's own
 | Operation | `dynamic_attributes` (classic) | `open_dc` |
 |---|---|---|
 | user value edit | instance `_<name>_formula` (as string) | instance `<name>` (typed) |
-| default edit | owner `_<name>_formula` (as string) | owner `<name>` (typed) |
+| default edit | owner `<name>` (literal default) | owner `<name>` (typed) |
 | meta edit | owner `_<name>_<field>` | owner `_<name>_<field>` |
 | new attribute | owner: `<name>` (string cache) + full meta + `_<name>_formula` | owner: `<name>` + full meta |
 | system key | owner raw `_<key>` | owner raw `_<key>` |
