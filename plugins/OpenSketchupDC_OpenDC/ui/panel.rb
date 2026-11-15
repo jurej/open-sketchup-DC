@@ -256,13 +256,14 @@ module OpenSketchupDC
         end
 
         names = ps.params.map(&:name)
+        known = names | DCReader::BUILTIN_ATTRS.map(&:downcase)
         Expression.refs(src).each do |scope, n|
           case scope
           when nil
-            next if names.include?(n)
+            next if known.include?(n.downcase)
             next if n == "copy" && names.include?("copies")
 
-            sug = DidYouMean::SpellChecker.new(dictionary: names).correct(n).first
+            sug = DidYouMean::SpellChecker.new(dictionary: known).correct(n).first
             errors << "unknown attribute '#{n}'" +
                       (sug ? " - did you mean '#{sug}'?" : "")
           when "global"
@@ -472,6 +473,7 @@ module OpenSketchupDC
           "dcAvailable" => DCBridge.available?,
           "functions" => Expression::FUNCTIONS,
           "actions" => Expression::Evaluator::ACTIONS,
+          "builtins" => DCReader::BUILTIN_ATTRS,
           "globals" => global_params(model),
           "entities" => sets.each_with_index.map do |ps, i|
             h = ps.to_h

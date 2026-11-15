@@ -367,6 +367,8 @@ window.OpenDC = (function () {
     var e = fxEntity(card);
     var k = {};
     ((e && e.params) || []).forEach(function (p) { k[p.name] = true; });
+    // built-in DC attrs are valid references on every DC
+    (state.builtins || []).forEach(function (b) { k[b.toLowerCase()] = true; });
     if (k.copies) k.copy = true;
     return k;
   }
@@ -519,6 +521,14 @@ window.OpenDC = (function () {
     var attrItems = (e.params || [])
       .filter(function (p) { return !p.internal; })
       .map(function (p) { return { label: p.name, insert: p.name, kind: "attr" }; });
+    var seen = {};
+    attrItems.forEach(function (i) { seen[i.insert.toLowerCase()] = true; });
+    (state.builtins || []).forEach(function (b) {
+      if (!seen[b.toLowerCase()]) {
+        attrItems.push({ label: b, insert: b, kind: "attr" });
+        seen[b.toLowerCase()] = true;
+      }
+    });
 
     if (sm) {
       var scope = sm[1].toLowerCase(), frag = (sm[2] || "").toLowerCase();

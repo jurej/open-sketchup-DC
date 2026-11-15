@@ -12,6 +12,13 @@ module OpenSketchupDC
     #
     # Dict access is abstracted so unit tests can pass plain Hashes.
     module DCReader
+      # Built-in DC attributes that exist on every dynamic component even
+      # without explicit dict keys - formulas may reference them freely
+      # (e.g. CURRENT("RotZ") when no rotz key exists).
+      BUILTIN_ATTRS = %w[X Y Z LenX LenY LenZ RotX RotY RotZ
+                         Hidden Copies Copy Material ScaleTool onClick
+                         Name Summary Description ItemCode Creator].freeze
+
       module_function
 
       # --- dict access abstraction -----------------------------------------
