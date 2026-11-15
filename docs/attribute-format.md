@@ -63,10 +63,13 @@ Write rules that work against Trimble's engine (verified):
   correctly. `DCReader` still decodes the full entity set on read
   (`&amp;` last) so foreign-written formulas display cleanly.
 - Bare numbers in the formula slot are evaluated in the attr's
-  `_<name>_units` context, **not** inches (verified: `"35.43"` with
-  `_lenx_units="CENTIMETERS"` produced 35.43 cm / 13.95"). The panel
-  therefore stores display-unit numbers for classic DCs and only converts
-  display→inches for `open_dc` (whose engine stores inches internally).
+  `_<name>_formulaunits` context, **not** inches — and `formulaunits` can
+  differ from the display `_<name>_units` (real door DC: `units=MILLIMETERS`,
+  `formulaunits=CENTIMETERS`, so typing `10` in the mm field must store `1.0`).
+  The panel converts display→formulaunits on classic writes; the literal
+  `<name>` slot (used by `set_default`) stores **inches**; `open_dc` also
+  stores inches internally. Earlier finding confirmed: `"35.43"` stored in a
+  `_formulaunits="CENTIMETERS"` slot produced 35.43 cm / 13.95".
 
 ### `onclick` behavior cluster (verified on a real door DC)
 

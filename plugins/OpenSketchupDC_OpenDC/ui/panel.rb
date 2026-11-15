@@ -111,7 +111,8 @@ module OpenSketchupDC
       def cmd_set_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
-          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name)
+          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name,
+                               param_formulaunits(e, p["name"]))
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set #{p['name']}") do
             DCWriter.set_value(e, p["name"], value, dict_name: dict_name)
           end
@@ -123,7 +124,9 @@ module OpenSketchupDC
       def cmd_set_default(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
-          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name)
+          # the literal <name> slot stores inches (engine units), unlike the
+          # formula slot which evals in _<name>_formulaunits
+          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name, "INCHES")
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set default #{p['name']}") do
             DCWriter.set_default(e, p["name"], value, dict_name: dict_name)
           end
@@ -199,7 +202,8 @@ module OpenSketchupDC
         Helpers.undo_wrap(model, "Open DC: Batch set #{name}") do
           entities.each do |e|
             dict_name = DCReader.dict_name_for(e)
-            value = coerce_value(p["value"], param_units(e, name), dict_name)
+            value = coerce_value(p["value"], param_units(e, name), dict_name,
+                                 param_formulaunits(e, name))
             DCWriter.set_value(e, name, value, dict_name: dict_name)
             dict_name == OS_DC_DICT ? Engine.mark_dirty(e) : classic << e
           end
@@ -292,18 +296,24 @@ module OpenSketchupDC
       end
 
       # Convert a UI-entered value to its stored form. Numbers typed into a
-      # length-unit field arrive in that field's display units. For classic
-      # DCs the formula slot interprets bare numbers in _<attr>_units, so the
-      # display number is stored as-is; for open_dc (internally inches) the
-      # number is converted.
-      def coerce_value(v, units = nil, dict_name = nil)
+      # length-unit field arrive in that field's display units (_<name>_units).
+      # Classic DC evaluates bare numbers in _<name>_formula_formulaunits, so
+      # classic writes convert display -> inches -> formulaunits (or the
+      # explicit target, e.g. "INCHES" for the literal <name> slot). open_dc
+      # stores inches internally. Non-length units pass through untouched.
+      def coerce_value(v, units = nil, dict_name = nil, target_units = nil)
         return v if v.is_a?(Numeric) || v == true || v == false
 
         s = v.to_s.strip
         if s =~ /\A-?\d+(\.\d+)?\z/
           n = s.to_f
-          n = Param.unit_to_inches(n, units) if dict_name == OS_DC_DICT &&
-                                                Param.length_unit?(units)
+          if Param.length_unit?(units)
+            inches = Param.unit_to_inches(n, units)
+            return inches if dict_name == OS_DC_DICT
+
+            target = target_units.to_s.empty? ? units : target_units
+            return Param.inches_to_unit(inches, target)
+          end
           return n
         end
         return true if s == "true"
@@ -315,6 +325,13 @@ module OpenSketchupDC
       def param_units(entity, name)
         dict_name = DCReader.dict_name_for(entity)
         DCReader.read(entity, dict_name: dict_name)[name]&.units
+      rescue StandardError
+        nil
+      end
+
+      def param_formulaunits(entity, name)
+        dict_name = DCReader.dict_name_for(entity)
+        DCReader.read(entity, dict_name: dict_name)[name]&.formulaunits
       rescue StandardError
         nil
       end
