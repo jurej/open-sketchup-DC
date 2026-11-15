@@ -1,3 +1,7 @@
+// Open DC - modern Dynamic Components for SketchUp
+// Copyright (C) 2026 Jure Judež and contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 /* Open DC parameter panel - vanilla JS, talks to Ruby via sketchup.dc(json). */
 window.OpenDC = (function () {
   var state = { entities: [], batch: null, dcAvailable: true, globals: [] };

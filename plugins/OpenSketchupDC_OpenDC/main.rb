@@ -1,3 +1,7 @@
+# Open DC - modern Dynamic Components for SketchUp
+# Copyright (C) 2026 Jure Judež and contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 module OpenSketchupDC
   module OpenDC
     # __dir__ is not UTF-8 encoded on Windows - force it for non-ASCII paths.

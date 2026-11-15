@@ -1,3 +1,7 @@
+# Open DC - modern Dynamic Components for SketchUp
+# Copyright (C) 2026 Jure Judež and contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Vendors open_sketchup_helpers.rb from the framework repo and wraps it as
 # OpenSketchupDC::OpenDC::Helpers. Re-run to update the vendored copy.
 $ErrorActionPreference = 'Stop'
@@ -19,6 +23,10 @@ $body = $lines[($mi + 1)..($lastEnd - 1)]
 $indented = $body | ForEach-Object { if ($_ -match '\S') { '    ' + $_ } else { '' } }
 
 $out = @(
+  '# Open DC - modern Dynamic Components for SketchUp'
+  '# Copyright (C) 2026 Jure Judez and contributors'
+  '# SPDX-License-Identifier: AGPL-3.0-or-later'
+  ''
   '# Open SketchUp Framework - Helpers Module'
   '# Version: 0.3.0 - vendored copy wrapped as OpenSketchupDC::OpenDC::Helpers'
   '# Source: open-sketchup-framework/src/open_sketchup_helpers.rb'

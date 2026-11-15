@@ -1,3 +1,7 @@
+# Open DC - modern Dynamic Components for SketchUp
+# Copyright (C) 2026 Jure Judež and contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Copies the plugin into SketchUp's Plugins folder for development.
 # Re-run after changes (or set up a junction for live editing).
 # Usage: powershell -File scripts/install_dev.ps1 [-SketchUpVersion 2024]

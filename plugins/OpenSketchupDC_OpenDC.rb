@@ -1,3 +1,7 @@
+# Open DC - modern Dynamic Components for SketchUp
+# Copyright (C) 2026 Jure Judež and contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # OpenSketchupDC_OpenDC.rb
 # Registration file only - all logic lives in the support folder.
 

@@ -1,3 +1,7 @@
+// Open DC - modern Dynamic Components for SketchUp
+// Copyright (C) 2026 Jure Judež and contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 // Dependency-graph SVG renderer shared by the graph window.
 // OpenDCGraph.render(g) -> HTML string. Nodes carry data-gp (param id),
 // edges carry data-f (dep id) / data-t (dependent id) for highlighting.

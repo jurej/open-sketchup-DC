@@ -1,3 +1,7 @@
+# Open DC - modern Dynamic Components for SketchUp
+# Copyright (C) 2026 Jure Judež and contributors
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Builds dist/OpenSketchupDC_OpenDC_v<VERSION>.rbz (an .rbz is just a ZIP).
 # Usage: powershell -File scripts/build_rbz.ps1
 $ErrorActionPreference = 'Stop'
