@@ -57,6 +57,11 @@ Write rules that work against Trimble's engine (verified):
 - Booleans must be strings (`"FALSE"`); the engine crashes on Ruby `false`.
 - Formulas are stored **HTML-escaped** (`&quot;`, `&amp;`). `DCReader`
   unescapes on read; `DCWriter` re-escapes on classic writes.
+- Bare numbers in the formula slot are evaluated in the attr's
+  `_<name>_units` context, **not** inches (verified: `"35.43"` with
+  `_lenx_units="CENTIMETERS"` produced 35.43 cm / 13.95"). The panel
+  therefore stores display-unit numbers for classic DCs and only converts
+  display→inches for `open_dc` (whose engine stores inches internally).
 
 ### `_<name>_error` = eval status slot
 

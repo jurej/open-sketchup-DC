@@ -109,7 +109,7 @@ module OpenSketchupDC
       def cmd_set_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
-          value = coerce_value(p["value"], param_units(e, p["name"]))
+          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name)
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set #{p['name']}") do
             DCWriter.set_value(e, p["name"], value, dict_name: dict_name)
           end
@@ -121,7 +121,7 @@ module OpenSketchupDC
       def cmd_set_default(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
-          value = coerce_value(p["value"], param_units(e, p["name"]))
+          value = coerce_value(p["value"], param_units(e, p["name"]), dict_name)
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set default #{p['name']}") do
             DCWriter.set_default(e, p["name"], value, dict_name: dict_name)
           end
@@ -150,7 +150,7 @@ module OpenSketchupDC
                                label: p["label"],
                                formlabel: p["formlabel"],
                                access: p["access"] || ACCESS_TEXTBOX,
-                               value: coerce_value(p["value"]),
+                               value: coerce_value(p["value"], p["units"], dict_name),
                                units: p["units"] || "STRING",
                                options: p["options"],
                                formula: p["formula"],
@@ -183,7 +183,7 @@ module OpenSketchupDC
         Helpers.undo_wrap(model, "Open DC: Batch set #{name}") do
           entities.each do |e|
             dict_name = DCReader.dict_name_for(e)
-            value = coerce_value(p["value"], param_units(e, name))
+            value = coerce_value(p["value"], param_units(e, name), dict_name)
             DCWriter.set_value(e, name, value, dict_name: dict_name)
             dict_name == OS_DC_DICT ? Engine.mark_dirty(e) : classic << e
           end
@@ -206,15 +206,18 @@ module OpenSketchupDC
       end
 
       # Convert a UI-entered value to its stored form. Numbers typed into a
-      # length-unit field (CENTIMETERS etc.) arrive in display units - internal
-      # storage is always inches.
-      def coerce_value(v, units = nil)
+      # length-unit field arrive in that field's display units. For classic
+      # DCs the formula slot interprets bare numbers in _<attr>_units, so the
+      # display number is stored as-is; for open_dc (internally inches) the
+      # number is converted.
+      def coerce_value(v, units = nil, dict_name = nil)
         return v if v.is_a?(Numeric) || v == true || v == false
 
         s = v.to_s.strip
         if s =~ /\A-?\d+(\.\d+)?\z/
           n = s.to_f
-          n = Param.unit_to_inches(n, units) if Param.length_unit?(units)
+          n = Param.unit_to_inches(n, units) if dict_name == OS_DC_DICT &&
+                                                Param.length_unit?(units)
           return n
         end
         return true if s == "true"
