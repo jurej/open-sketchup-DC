@@ -376,6 +376,23 @@ button.small { padding: 1px 7px; font-size: 12px; }
 }
 
 /* ---------- add form ---------- */
+.addrow { padding: 4px 10px 10px; }
+.addbtn {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px dashed rgba(79, 156, 249, 0.5);
+  border-radius: 5px;
+  background: rgba(79, 156, 249, 0.07);
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.addbtn:hover {
+  background: rgba(79, 156, 249, 0.18);
+  border-color: var(--accent);
+  border-style: solid;
+  color: #cfe4ff;
+}
 .addform {
   display: flex;
   gap: 5px;

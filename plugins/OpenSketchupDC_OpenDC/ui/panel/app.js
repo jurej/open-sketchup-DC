@@ -335,14 +335,15 @@ window.OpenDC = (function () {
     var id = esc(e.entityId);
     if (openAdd[e.entityId]) {
       return '<form class="addform" data-addform="' + id + '">' +
-        '<input name="name" placeholder="attribute name" required>' +
+        '<input name="name" placeholder="name (no spaces)" required>' +
         '<input name="label" placeholder="label">' +
-        '<select name="access"><option>TEXTBOX</option><option>LIST</option><option>VIEW</option><option>NONE</option></select>' +
-        '<input name="value" placeholder="value">' +
-        '<button type="submit">Add</button></form>';
+        '<select name="access" title="TEXTBOX: free input · LIST: dropdown of options · VIEW: read-only · NONE: hidden">' +
+        '<option>TEXTBOX</option><option>LIST</option><option>VIEW</option><option>NONE</option></select>' +
+        '<input name="value" placeholder="default value">' +
+        '<button type="submit" class="primary">Add</button>' +
+        '<button type="button" class="small" data-addcancel="' + id + '">✕</button></form>';
     }
-    return '<div class="prow"><span class="pname"></span><span></span>' +
-      '<button class="small" data-add="' + id + '">+ attr</button></div>';
+    return '<div class="addrow"><button class="addbtn" data-add="' + id + '">+ Add attribute</button></div>';
   }
 
   /* ---------------- events ---------------- */
@@ -383,6 +384,13 @@ window.OpenDC = (function () {
     host.querySelectorAll("[data-add]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         openAdd[btn.getAttribute("data-add")] = true;
+        render();
+      });
+    });
+
+    host.querySelectorAll("[data-addcancel]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        delete openAdd[btn.getAttribute("data-addcancel")];
         render();
       });
     });
