@@ -221,6 +221,11 @@ window.OpenDC = (function () {
     var id = esc(entityId);
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
+      '<div><label>formlabel</label><input data-f="formlabel" value="' + esc(p.formlabel || "") + '"></div>' +
+      '<div><label>id</label><input data-f="label" value="' + esc(p.label || "") + '"></div>' +
+      '<div class="full"><label>tooltip - hint shown when hovering the attribute</label>' +
+      '<input data-f="tooltip" value="' + esc(p.tooltip || "") + '" ' +
+      'placeholder="e.g. Door panel thickness"></div>' +
       '<div class="full"><label>formula <button type="button" class="fxdocs" ' +
       'data-fxdocs title="Function &amp; syntax reference">&#402;(x)</button>' +
       '<button type="button" class="fxdocs" data-fxnodes="' + n + '" ' +
@@ -234,10 +239,12 @@ window.OpenDC = (function () {
       '<span class="uwrap"><input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
       (p.formula ? " disabled" : "") + '>' +
       (unitSuffix(p) ? '<span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span></div>' +
-      '<div><label>access</label><select data-f="access">' +
-      ["NONE", "VIEW", "TEXTBOX", "LIST"].map(function (a) {
-        return '<option' + (p.access === a ? " selected" : "") + '>' + a + '</option>';
-      }).join("") + '</select></div>' +
+      '<div><label>display rule</label><select data-f="access">' +
+      [["NONE", "hidden"], ["VIEW", "view only"], ["TEXTBOX", "edit"], ["LIST", "list"]]
+        .map(function (a) {
+          return '<option value="' + a[0] + '"' +
+            (p.access === a[0] ? " selected" : "") + '>' + a[1] + '</option>';
+        }).join("") + '</select></div>' +
       '<div><label>units</label>' + unitSelect("units", p.units || "") + '</div>' +
       '<div><label>formula units</label>' + unitSelect("formulaunits", p.formulaunits || "") + '</div>' +
       '<div class="full"><label>options - type Label or Label=value, Enter adds it</label>' +
@@ -245,11 +252,6 @@ window.OpenDC = (function () {
       (p.optionsList || []).map(function (o) { return optChipHtml(o.label, o.value); }).join("") +
       '<input class="optin" placeholder="Label=value">' +
       '</div><input type="hidden" data-f="options" value="' + esc(p.options || "") + '"></div>' +
-      '<div><label>formlabel</label><input data-f="formlabel" value="' + esc(p.formlabel || "") + '"></div>' +
-      '<div><label>label</label><input data-f="label" value="' + esc(p.label || "") + '"></div>' +
-      '<div class="full"><label>tooltip - hint shown when hovering the attribute</label>' +
-      '<input data-f="tooltip" value="' + esc(p.tooltip || "") + '" ' +
-      'placeholder="e.g. Door panel thickness"></div>' +
       '<div class="full row-actions">' +
       '<button class="small danger" data-del="' + n + '">Delete</button>' +
       '<button class="small confirm" data-save="' + n + '">Apply</button>' +
@@ -353,9 +355,10 @@ window.OpenDC = (function () {
     if (openAdd[e.entityId]) {
       return '<form class="addform" data-addform="' + id + '">' +
         '<input name="name" placeholder="name (no spaces)" required>' +
-        '<input name="label" placeholder="label">' +
-        '<select name="access" title="TEXTBOX: free input · LIST: dropdown of options · VIEW: read-only · NONE: hidden">' +
-        '<option>TEXTBOX</option><option>LIST</option><option>VIEW</option><option>NONE</option></select>' +
+        '<input name="label" placeholder="id">' +
+        '<select name="access" title="display rule: where the attribute appears - edit: free input · list: dropdown of options · view only: read-only · hidden: not shown">' +
+        '<option value="TEXTBOX">edit</option><option value="LIST">list</option>' +
+        '<option value="VIEW">view only</option><option value="NONE">hidden</option></select>' +
         '<input name="value" placeholder="default value">' +
         '<button type="submit" class="primary">Add</button>' +
         '<button type="button" class="small" data-addcancel="' + id + '">✕</button></form>';
