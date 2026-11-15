@@ -153,10 +153,24 @@ window.OpenDC = (function () {
             if (sec || (params[i - 1] && params[i - 1].section)) {
               hdr = '<div class="section' + (sec ? "" : " bare") + '"' +
                     (sec ? ' data-sec="' + esc(sec) + '"' : "") + '">' +
-                    (sec ? '<span>' + esc(sec) + '</span>' : "") + '</div>';
+                    (cfg && sec
+                      ? '<span class="grip secgrip" draggable="true" title="Drag to reorder">⠇</span>' +
+                        '<span class="secname" data-secedit title="Click to rename">' + esc(sec) + '</span>' +
+                        '<span class="secdel" data-secdel title="Remove divider">&times;</span>'
+                      : (sec ? '<span class="secname">' + esc(sec) + '</span>' : "")) +
+                    '</div>';
             }
           }
-          return hdr + renderParam(e, p, cfg);
+          // Insert-divider strips (configure mode): above the first row
+          // when it is unsectioned, and inside contiguous same-section
+          // runs - a strip at an existing boundary would only make an
+          // empty marker, so it isn't offered there.
+          var insTop = cfg && i === 0 && !sec
+            ? '<div class="secinsert" data-secins title="Insert a section divider here"></div>' : "";
+          var insBot = cfg && i < params.length - 1 &&
+            (params[i + 1].section || "") === sec
+            ? '<div class="secinsert" data-secins title="Insert a section divider here"></div>' : "";
+          return insTop + hdr + renderParam(e, p, cfg) + insBot;
         }).join("") +
         (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>') +
         '</div>' +
@@ -507,7 +521,10 @@ window.OpenDC = (function () {
     var toks = [];
     box.querySelectorAll(".section, .prow[data-pname]").forEach(function (el) {
       if (el.classList.contains("section")) {
-        toks.push("&" + el.getAttribute("data-sec") + "&");
+        // bare trailing-group dividers carry no marker - skipping them
+        // also avoids writing "&null&" into _itemorder
+        var s = el.getAttribute("data-sec");
+        if (s) toks.push("&" + s + "&");
       } else {
         toks.push(el.getAttribute("data-pname"));
       }
@@ -524,10 +541,11 @@ window.OpenDC = (function () {
 
   function wireReorder(host) {
     host.querySelectorAll(".grip").forEach(function (g) {
-      var row = g.closest(".prow");
+      var row = g.closest(".prow, .section");
       g.addEventListener("dragstart", function (ev) {
         ev.dataTransfer.effectAllowed = "move";
-        ev.dataTransfer.setData("text/plain", row.getAttribute("data-pname"));
+        ev.dataTransfer.setData("text/plain",
+          row.getAttribute("data-pname") || "&section&");
         ev.dataTransfer.setDragImage(row, 12, 12);
         row.classList.add("dragging");
       });
@@ -547,7 +565,7 @@ window.OpenDC = (function () {
       });
       box.addEventListener("drop", function (ev) {
         ev.preventDefault();
-        var src = box.querySelector(".prow.dragging");
+        var src = box.querySelector(".dragging");
         var dst = box._dropRow;
         if (src && dst && src !== dst) {
           box.insertBefore(src, box._dropBefore ? dst : dst.nextSibling);
@@ -559,10 +577,67 @@ window.OpenDC = (function () {
         clearDropMarks(box);
       });
       box.addEventListener("dragend", function () {
-        box.querySelectorAll(".prow.dragging").forEach(function (r) {
+        box.querySelectorAll(".dragging").forEach(function (r) {
           r.classList.remove("dragging");
         });
         clearDropMarks(box);
+      });
+    });
+
+    // --- divider editing: insert / rename / delete ----------------------
+    host.querySelectorAll("[data-secins]").forEach(function (strip) {
+      strip.addEventListener("click", function () {
+        var sec = document.createElement("div");
+        sec.className = "section";
+        sec.setAttribute("data-sec", "New section");
+        sec.innerHTML = '<span class="secname">New section</span>';
+        strip.parentNode.insertBefore(sec, strip.nextSibling);
+        send("reorder", {
+          entityId: strip.closest(".card").getAttribute("data-eid"),
+          order: orderTokens(strip.parentNode)
+        });
+      });
+    });
+
+    host.querySelectorAll("[data-secdel]").forEach(function (x) {
+      x.addEventListener("click", function () {
+        var sec = x.closest(".section");
+        var box = sec.parentNode;
+        sec.remove();
+        send("reorder", {
+          entityId: box.closest(".card").getAttribute("data-eid"),
+          order: orderTokens(box)
+        });
+      });
+    });
+
+    host.querySelectorAll("[data-secedit]").forEach(function (span) {
+      span.addEventListener("click", function () {
+        var sec = span.closest(".section");
+        var cur = sec.getAttribute("data-sec");
+        var inp = document.createElement("input");
+        inp.className = "secinput";
+        inp.value = cur;
+        span.replaceWith(inp);
+        inp.focus();
+        inp.select();
+        function commit() {
+          var v = inp.value.trim().replace(/[&,]/g, "");
+          inp.replaceWith(span);
+          if (v && v !== cur) {
+            sec.setAttribute("data-sec", v);
+            span.textContent = v;
+            send("reorder", {
+              entityId: sec.closest(".card").getAttribute("data-eid"),
+              order: orderTokens(sec.parentNode)
+            });
+          }
+        }
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") inp.blur();
+          if (e.key === "Escape") { inp.value = cur; inp.blur(); }
+        });
+        inp.addEventListener("blur", commit);
       });
     });
   }

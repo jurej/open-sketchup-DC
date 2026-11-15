@@ -190,6 +190,38 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 .section::before { flex: 0 0 12px; }
 .section.bare::before { flex: 1; }
 
+/* configure-mode section editing affordances */
+.section .secgrip { opacity: .7; text-transform: none; }
+.section .secname[data-secedit] { cursor: text; }
+.section .secname[data-secedit]:hover { color: var(--fg); }
+.section .secdel {
+  color: var(--dim); font-size: 12px; font-weight: 400;
+  text-transform: none; cursor: pointer; opacity: 0;
+  transition: opacity .12s;
+}
+.section:hover .secdel { opacity: .9; }
+.section .secdel:hover { color: var(--error); }
+.secinput {
+  width: 120px; padding: 1px 5px; font-size: 10px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  background: var(--bg); color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 3px; outline: none;
+}
+
+/* insert-divider strip between rows (configure mode) */
+.secinsert {
+  position: relative; height: 6px; margin: -3px 10px 0; cursor: pointer;
+}
+.secinsert::after {
+  content: "+ divider"; position: absolute; left: 50%; top: -6px;
+  transform: translateX(-50%);
+  font-size: 9px; line-height: 13px; padding: 0 7px;
+  color: var(--accent); background: var(--bg2);
+  border: 1px dashed rgba(79,156,249,.5); border-radius: 7px;
+  opacity: 0; transition: opacity .1s; white-space: nowrap;
+}
+.secinsert:hover::after { opacity: 1; }
+
 /* ---------- tooltip hint marker ---------- */
 .tipdot {
   display: inline-block;
