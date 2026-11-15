@@ -174,6 +174,23 @@
   <script src="vendor/rete.min.js"></script>
   <script src="vendor/connection-plugin.min.js"></script>
   <script src="vendor/vue-render-plugin.min.js"></script>
+  <script>
+    // Minimal lodash stub — context-menu-plugin UMD expects window._
+    // and only uses debounce()/isFunction().
+    window._ = window._ || {
+      debounce: function (fn, wait) {
+        var t = null;
+        function d() {
+          var self = this, args = arguments;
+          if (t) clearTimeout(t);
+          t = setTimeout(function () { t = null; fn.apply(self, args); }, wait);
+        }
+        d.cancel = function () { if (t) { clearTimeout(t); t = null; } };
+        return d;
+      },
+      isFunction: function (v) { return typeof v === 'function'; }
+    };
+  </script>
   <script src="vendor/context-menu-plugin.min.js"></script>
   <script src="nodes.js"></script>
 </body>

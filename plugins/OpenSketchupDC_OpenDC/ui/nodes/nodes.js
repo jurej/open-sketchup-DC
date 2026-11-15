@@ -332,35 +332,46 @@
   };
 
   // ---- context menu --------------------------------------------------------
+  // The plugin calls item.onClick(args) and ignores the return value —
+  // the callback itself must add the built node to the editor.
+  function addItem(type, v, extra) {
+    return function () {
+      return makeNode(type, v, extra).then(function (n) {
+        editor.addNode(n);
+        markRoots();
+        requestPreview();
+      }).catch(function (err) {
+        toast("add failed: " + err.message, true);
+      });
+    };
+  }
   function menuItems() {
     var items = { Operators: {} };
     ["+", "-", "*", "/", "%", "^", "&", "=", "<>", "<", ">", "<=", ">=",
      "AND", "OR"].forEach(function (op) {
-      items.Operators[op] = function () { return makeNode("bin", op); };
+      items.Operators[op] = addItem("bin", op);
     });
-    items.Operators["unary -"] = function () { return makeNode("un", "-"); };
-    items.Operators["NOT"] = function () { return makeNode("un", "NOT"); };
+    items.Operators["unary -"] = addItem("un", "-");
+    items.Operators["NOT"] = addItem("un", "NOT");
     items.Literals = {
-      Number: function () { return makeNode("const", "0", { k: "num" }); },
-      Text: function () { return makeNode("const", "", { k: "str" }); }
+      Number: addItem("const", "0", { k: "num" }),
+      Text: addItem("const", "", { k: "str" })
     };
     items.Attributes = {};
     (state.attrs || []).concat(state.builtins || []).forEach(function (a) {
-      items.Attributes[a] = function () { return makeNode("attr", a); };
+      items.Attributes[a] = addItem("attr", a);
     });
     (state.globals || []).forEach(function (g) {
-      items.Attributes["global!" + g] = function () {
-        return makeNode("ref", "global!" + g);
-      };
+      items.Attributes["global!" + g] = addItem("ref", "global!" + g);
     });
     items.Functions = {};
     (state.functions || []).forEach(function (f) {
-      items.Functions[f] = function () { return makeNode("call", f); };
+      items.Functions[f] = addItem("call", f);
     });
     if (state.isAction) {
       items.Actions = {};
       (state.actions || []).forEach(function (f) {
-        items.Actions[f] = function () { return makeNode("act", f); };
+        items.Actions[f] = addItem("act", f);
       });
     }
     return items;
