@@ -193,9 +193,10 @@ window.OpenDC = (function () {
     var id = esc(entityId);
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
-      '<div class="full"><label>formula - click an attribute below to insert it</label>' +
-      '<div class="fxedit"><div class="fxback" aria-hidden="true"></div>' +
-      '<input data-f="formula" class="fxsrc" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(p.formula || "") + '"></div>' +
+      '<div class="full"><label>formula - type or click an attribute below to insert it</label>' +
+      '<div class="fxedit">' +
+      '<input data-f="formula" class="fxsrc" spellcheck="false" autocomplete="off" autocapitalize="off" value="' + esc(p.formula || "") + '">' +
+      '<div class="fxlist hidden"></div></div>' +
       paletteHtml(e, p) +
       '<div class="fxstatus"></div></div>' +
       '<div><label>default' + (p.formula ? " (formula-driven)" : "") + '</label>' +
@@ -304,18 +305,20 @@ window.OpenDC = (function () {
         var ins = c.getAttribute("data-ins");
         input.setRangeText(ins, input.selectionStart, input.selectionEnd, "end");
         input.focus();
-        paintFx(input);
         queueValidation(input);
       });
     });
 
     host.querySelectorAll('input[data-f="formula"]').forEach(function (inp) {
       inp.addEventListener("input", function () {
-        paintFx(inp);
+        fxShow(inp, fxCandidates(inp));
         queueValidation(inp);
       });
-      inp.addEventListener("scroll", function () { paintFx(inp); });
-      paintFx(inp);
+      inp.addEventListener("keydown", function (ev) { fxKeyNav(inp, ev); });
+      inp.addEventListener("blur", function () {
+        var box = inp.closest(".fxedit");
+        setTimeout(function () { fxClose(box); }, 150);
+      });
       queueValidation(inp);
     });
 
@@ -365,69 +368,136 @@ window.OpenDC = (function () {
     });
   }
 
-  /* ---------------- formula pill highlighting ---------------- */
+  /* ---------------- formula autocomplete ---------------- */
 
   var FX_KEYWORDS = { TRUE: 1, FALSE: 1, AND: 1, OR: 1, NOT: 1 };
+  var fxSel = 0;   // selected index in the open suggestion list
+  var fxItems = []; // current suggestions {label, insert, kind}
 
-  function fxKnown(card) {
+  function fxEntity(card) {
     var eid = card.getAttribute("data-eid");
-    var e = (state.entities || []).find(function (x) { return x.entityId === eid; });
-    var k = {};
-    ((e && e.params) || []).forEach(function (p) { k[p.name] = true; });
-    if (k.copies) k.copy = true;
-    return k;
+    return (state.entities || []).find(function (x) { return x.entityId === eid; }) || { params: [] };
   }
 
-  // Lightweight tokenizer mirroring the Ruby lexer: " opens strings, ' only
-  // follows digits (feet). Known attribute names render as chips, scope!
-  // refs as ref chips, unknown bare identifiers as error chips.
-  function fxPaintHtml(src, known) {
-    var out = "", i = 0, n = src.length;
-    while (i < n) {
-      var c = src[i];
-      if (/[\d.]/.test(c)) {
-        var nm = /^[\d.]+[A-Za-z"']*/.exec(src.slice(i));
-        out += esc(nm[0]);
-        i += nm[0].length;
-        continue;
-      }
-      if (c === '"') {
-        var j = i + 1;
-        while (j < n && src[j] !== '"') j++;
-        var str = src.slice(i, Math.min(j + 1, n));
-        out += esc(str).replace(/[A-Za-z_][A-Za-z0-9_]*/g, function (w) {
-          return known[w.toLowerCase()] ? '<span class="pill attr">' + w + "</span>" : w;
+  // Candidate source for the token under the caret. A "scope!" prefix
+  // switches the dictionary: global! -> model globals, parent!/node! ->
+  // same-name attrs (best-effort; the panel can't see the parent context).
+  function fxCandidates(inp) {
+    var upto = inp.value.slice(0, inp.selectionStart);
+    var m = /[A-Za-z_][A-Za-z0-9_]*$/.exec(upto);
+    var sm = /([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)?$/.exec(upto);
+    var e = fxEntity(inp.closest(".card"));
+    var items = [];
+    var attrItems = (e.params || [])
+      .filter(function (p) { return !p.internal; })
+      .map(function (p) { return { label: p.name, insert: p.name, kind: "attr" }; });
+
+    if (sm) {
+      var scope = sm[1].toLowerCase(), frag = (sm[2] || "").toLowerCase();
+      if (scope === "global") {
+        items = (state.globals || []).map(function (g) {
+          return { label: g.name, insert: g.name, kind: "glob" };
         });
-        i = j + (j < n ? 1 : 0);
-        continue;
+      } else {
+        items = attrItems.slice();
       }
-      var m = /^[A-Za-z_][A-Za-z0-9_]*(!\s*[A-Za-z_][A-Za-z0-9_]*)?/.exec(src.slice(i));
-      if (m) {
-        var tok = m[0];
-        var rest = src.slice(i + tok.length);
-        if (tok.indexOf("!") !== -1) {
-          out += '<span class="pill ref">' + esc(tok) + "</span>";
-        } else if (/^\s*\(/.test(rest) || FX_KEYWORDS[tok.toUpperCase()]) {
-          out += esc(tok); // function name or keyword - plain
-        } else if (known[tok.toLowerCase()]) {
-          out += '<span class="pill attr">' + esc(tok) + "</span>";
-        } else {
-          out += '<span class="pill bad">' + esc(tok) + "</span>";
-        }
-        i += tok.length;
-        continue;
-      }
-      out += esc(c);
-      i++;
+      return { items: items.filter(function (i) { return i.label.toLowerCase().indexOf(frag) === 0; }),
+               frag: frag, scoped: true };
     }
-    return out;
+
+    var frag = m ? m[0] : "";
+    if (frag === "") return { items: [], frag: frag, scoped: false };
+    var low = frag.toLowerCase();
+    items = attrItems;
+    (state.globals || []).forEach(function (g) {
+      items.push({ label: "global!" + g.name, insert: "global!" + g.name, kind: "glob" });
+    });
+    FN_CHIPS.forEach(function (t) {
+      var name = t.replace(/\(.*/, "");
+      items.push({ label: name + "()", insert: t, kind: "fn" });
+    });
+    var box = inp.closest(".pedit");
+    if (box && box.getAttribute("data-pedit") === "onclick") {
+      ACTION_CHIPS.forEach(function (t) {
+        var name = t.replace(/\(.*/, "");
+        items.push({ label: name + "()", insert: t, kind: "act" });
+      });
+    }
+    if ((e.params || []).some(function (p) { return p.name === "copies"; }))
+      items.push({ label: "copy", insert: "copy", kind: "attr" });
+    return { items: items.filter(function (i) { return i.label.toLowerCase().indexOf(low) === 0; }),
+             frag: frag, scoped: false };
   }
 
-  function paintFx(inp) {
-    var back = inp.parentElement.querySelector(".fxback");
-    if (!back) return;
-    back.innerHTML = fxPaintHtml(inp.value, fxKnown(inp.closest(".card")));
-    back.scrollLeft = inp.scrollLeft;
+  function fxClose(box) {
+    var list = box && box.querySelector(".fxlist");
+    if (list) list.classList.add("hidden");
+    fxItems = [];
+  }
+
+  function fxShow(inp, res) {
+    var box = inp.closest(".fxedit");
+    var list = box.querySelector(".fxlist");
+    if (!res.items.length) { fxClose(box); return; }
+    fxItems = res.items.slice(0, 9);
+    fxSel = 0;
+    list.innerHTML = fxItems.map(function (i, k) {
+      return '<div class="fxitem" data-i="' + k + '">' +
+        '<span class="fxkind ' + i.kind + '">' + i.kind + '</span>' +
+        '<span class="fxlabel">' + esc(i.label) + "</span></div>";
+    }).join("");
+    list.querySelectorAll(".fxitem").forEach(function (it) {
+      it.addEventListener("mousedown", function (ev) {
+        ev.preventDefault();
+        fxAccept(inp, fxItems[+it.getAttribute("data-i")], res);
+      });
+    });
+    list.classList.remove("hidden");
+    paintFxSel(list);
+  }
+
+  function paintFxSel(list) {
+    list.querySelectorAll(".fxitem").forEach(function (it, k) {
+      it.classList.toggle("sel", k === fxSel);
+    });
+    var sel = list.querySelector(".fxitem.sel");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+
+  function fxAccept(inp, item, res) {
+    // Replace the fragment under the caret (or the attr name after scope!).
+    var upto = inp.value.slice(0, inp.selectionStart);
+    var rest = inp.value.slice(inp.selectionStart);
+    var cut;
+    if (res.scoped) {
+      // "parent!si" -> replace frag; "parent!" (empty frag) -> append.
+      cut = /[A-Za-z_][A-Za-z0-9_]*$/.test(upto)
+        ? upto.replace(/[A-Za-z_][A-Za-z0-9_]*$/, item.insert)
+        : upto + item.insert;
+    } else {
+      cut = upto.replace(/[A-Za-z_][A-Za-z0-9_!]*$/, item.insert);
+    }
+    inp.value = cut + rest;
+    inp.selectionStart = inp.selectionEnd = cut.length;
+    inp.focus();
+    fxClose(inp.closest(".fxedit"));
+    queueValidation(inp);
+  }
+
+  function fxKeyNav(inp, ev) {
+    var box = inp.closest(".fxedit");
+    var list = box && box.querySelector(".fxlist");
+    if (!list || list.classList.contains("hidden")) return false;
+    if (ev.key === "ArrowDown") { fxSel = Math.min(fxSel + 1, fxItems.length - 1); paintFxSel(list); }
+    else if (ev.key === "ArrowUp") { fxSel = Math.max(fxSel - 1, 0); paintFxSel(list); }
+    else if (ev.key === "Enter" || ev.key === "Tab") {
+      var upto = inp.value.slice(0, inp.selectionStart);
+      var sm = /([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)?$/.exec(upto);
+      fxAccept(inp, fxItems[fxSel], { scoped: !!sm });
+    } else if (ev.key === "Escape") { fxClose(box); }
+    else return false;
+    ev.preventDefault();
+    return true;
   }
 
   /* ---------------- formula validation ---------------- */
