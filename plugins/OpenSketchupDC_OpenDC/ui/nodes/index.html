@@ -134,6 +134,10 @@
       max-height: min(340px, calc(100vh - 80px));
       overflow-y: auto; overflow-x: hidden;
     }
+    /* the plugin keeps sibling submenus open on a debounce - force single-
+       open instead: hide every submenu except the hovered item's own */
+    #rete .context-menu .item .subitems { display: none !important; }
+    #rete .context-menu .item:hover > .subitems { display: block !important; }
     /* slim dark scrollbars inside menus */
     #rete .context-menu .subitems::-webkit-scrollbar { width: 8px; }
     #rete .context-menu .subitems::-webkit-scrollbar-track {
