@@ -39,7 +39,12 @@ Requires **SketchUp 2024+** (Windows/Mac).
 - *Extensions → Open DC → Parameter Panel* — live parameter editor.
   - **Options** tab: user-facing parameters (like Component Options).
   - **Advanced** tab: every attribute incl. formulas & meta (`fx` expands
-    an editor; `*` marks instance overrides).
+    an editor; `*` marks instance overrides). The formula editor has a
+    click-to-insert palette — attributes, `global!` refs, function
+    templates (and `SET`/`REDRAW`/`ALERT`/`GOTOSCENE` on `onclick`) — plus
+    live validation through the real parser: typos in attribute or
+    function names are flagged with did-you-mean suggestions and blocked
+    from being saved.
   - Select multiple DCs → a **Batch edit** section appears with the shared
     parameters (`<mixed>` = different current values).
 - *Extensions → Open DC → Interact Tool* — click a DC to run its `onClick`

@@ -4,6 +4,20 @@ window.OpenDC = (function () {
   var tabs = {};      // entityId -> "options" | "advanced"
   var openAdd = {};   // entityId -> bool
   var openEdit = {};  // entityId::name -> bool (advanced editor expanded)
+  var fxTimers = {};  // entityId::name -> debounce timer
+  var fxReq = {};     // entityId::name -> last validation request id
+  var fxValid = {};   // entityId::name -> last validation ok flag (true/false/undefined)
+  var fxReqSeq = 0;
+
+  // Function chip templates (inserted at caret). Parens/commas left for the
+  // user to fill - like block-builder "blocks" but text-native.
+  var FN_CHIPS = [
+    "IF(,,)", "CHOOSE(,,)", 'CURRENT("")', "MIN(,)", "MAX(,)", "ROUND(,)",
+    "OPTIONINDEX(\"\")", "OPTIONVALUE(,\"\")"
+  ];
+  var ACTION_CHIPS = [
+    'SET("",,)', 'ANIMATE("",,)', "REDRAW()", 'ALERT("")', 'GOTOSCENE("")'
+  ];
 
   function send(action, payload) {
     sketchup.dc(JSON.stringify({ action: action, payload: payload || {} }));
@@ -144,11 +158,45 @@ window.OpenDC = (function () {
     return html;
   }
 
+  function chip(text, ins, cls, title) {
+    return '<button type="button" class="fxchip ' + cls + '" data-ins="' + esc(ins) +
+      '" title="' + esc(title || ins) + '">' + esc(text) + '</button>';
+  }
+
+  // Click-to-insert palette: every existing attribute on the entity as a
+  // chip (no manual name typing -> no attr-name typos), plus global!s,
+  // function templates, and onClick actions when editing that attribute.
+  function paletteHtml(e, p) {
+    var out = ['<div class="fxpalette">'];
+    out.push('<span class="fxgroup">attrs</span>');
+    (e.params || []).forEach(function (x) {
+      if (!x.internal)
+        out.push(chip(x.name, x.name, "attr", x.displayName || x.name));
+    });
+    if ((e.params || []).some(function (x) { return x.name === "copies"; }))
+      out.push(chip("copy", "copy", "attr", "copy index inside generated copies"));
+    (state.globals || []).forEach(function (g) {
+      out.push(chip("global!" + g.name, "global!" + g.name, "glob", "model-global attribute"));
+    });
+    out.push('<span class="fxgroup">fns</span>');
+    FN_CHIPS.forEach(function (t) { out.push(chip(t.replace(/\(.*/, "") + "()", t, "fn", t)); });
+    if (p.name === "onclick") {
+      out.push('<span class="fxgroup">actions</span>');
+      ACTION_CHIPS.forEach(function (t) { out.push(chip(t.replace(/\(.*/, "") + "()", t, "act", t)); });
+    }
+    out.push('</div>');
+    return out.join("");
+  }
+
   function editorHtml(entityId, p) {
+    var e = (state.entities || []).find(function (x) { return x.entityId === entityId; }) || { params: [] };
     var id = esc(entityId);
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
-      '<div><label>formula</label><input data-f="formula" value="' + esc(p.formula || "") + '"></div>' +
+      '<div class="full"><label>formula - click an attribute below to insert it</label>' +
+      '<input data-f="formula" value="' + esc(p.formula || "") + '">' +
+      paletteHtml(e, p) +
+      '<div class="fxstatus"></div></div>' +
       '<div><label>default</label><input data-f="default" value="' + esc(fmt(p["default"])) + '"></div>' +
       '<div><label>access</label><select data-f="access">' +
       ["NONE", "VIEW", "TEXTBOX", "LIST"].map(function (a) {
@@ -245,12 +293,33 @@ window.OpenDC = (function () {
       });
     });
 
+    // Formula builder: attribute/function chips insert at the caret (no
+    // hand-typed attr names -> no typos).
+    host.querySelectorAll(".fxchip[data-ins]").forEach(function (c) {
+      c.addEventListener("click", function () {
+        var input = c.closest(".pedit").querySelector('input[data-f="formula"]');
+        var ins = c.getAttribute("data-ins");
+        input.setRangeText(ins, input.selectionStart, input.selectionEnd, "end");
+        input.focus();
+        queueValidation(input);
+      });
+    });
+
+    host.querySelectorAll('input[data-f="formula"]').forEach(function (inp) {
+      inp.addEventListener("input", function () { queueValidation(inp); });
+      queueValidation(inp);
+    });
+
     host.querySelectorAll("[data-save]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var card = btn.closest(".card");
         var eid = card.getAttribute("data-eid");
         var name = btn.getAttribute("data-save");
         var box = card.querySelector('.pedit[data-pedit="' + name + '"]');
+        if (fxValid[eid + "::" + name] === false) {
+          error("Fix the formula errors before applying.");
+          return;
+        }
         // default -> definition, other fields -> meta
         box.querySelectorAll("[data-f]").forEach(function (f) {
           var field = f.getAttribute("data-f");
@@ -286,6 +355,56 @@ window.OpenDC = (function () {
     });
   }
 
+  /* ---------------- formula validation ---------------- */
+
+  // Debounced server-side check: the real parser catches syntax errors and
+  // unknown attribute references before they're saved.
+  function queueValidation(inp) {
+    var box = inp.closest(".pedit");
+    var card = inp.closest(".card");
+    if (!box || !card) return;
+    var eid = card.getAttribute("data-eid");
+    var name = box.getAttribute("data-pedit");
+    var key = eid + "::" + name;
+    clearTimeout(fxTimers[key]);
+    var status = box.querySelector(".fxstatus");
+    if (status) status.textContent = "";
+    if (inp.value.trim() === "") {   // blank = remove formula: always fine
+      fxValid[key] = true;
+      inp.classList.remove("invalid");
+      return;
+    }
+    fxTimers[key] = setTimeout(function () {
+      var req = ++fxReqSeq;
+      fxReq[key] = req;
+      send("validateFormula", {
+        entityId: eid, name: name, formula: inp.value, req: req
+      });
+    }, 250);
+  }
+
+  function onValidation(msg) {
+    var key = msg.entityId + "::" + msg.name;
+    if (fxReq[key] !== msg.req) return; // stale response
+    var card = document.querySelector('.card[data-eid="' + msg.entityId + '"]');
+    if (!card) return;
+    var box = card.querySelector('.pedit[data-pedit="' + msg.name + '"]');
+    if (!box) return;
+    var input = box.querySelector('input[data-f="formula"]');
+    var status = box.querySelector(".fxstatus");
+    fxValid[key] = msg.ok;
+    if (input) input.classList.toggle("invalid", !msg.ok);
+    var parts = [];
+    (msg.errors || []).forEach(function (e) {
+      parts.push('<div class="bad">' + esc(e) + "</div>");
+    });
+    (msg.hints || []).forEach(function (h) {
+      parts.push('<div class="hint">' + esc(h) + "</div>");
+    });
+    if (msg.ok && parts.length === 0) parts.push('<div class="ok">looks good</div>');
+    status.innerHTML = parts.join("");
+  }
+
   document.getElementById("search").addEventListener("input", render);
   document.getElementById("btn-refresh").addEventListener("click", function () { send("refresh"); });
   document.getElementById("btn-redraw").addEventListener("click", function () {
@@ -294,5 +413,5 @@ window.OpenDC = (function () {
 
   document.addEventListener("DOMContentLoaded", function () { send("ready"); });
 
-  return { update: update, error: error, send: send };
+  return { update: update, error: error, send: send, onValidation: onValidation };
 })();

@@ -148,6 +148,35 @@ button.small { padding: 1px 7px; font-size: 12px; }
 .pedit .full { grid-column: 1 / -1; }
 .pedit .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
+/* ---------- formula builder ---------- */
+.fxpalette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+.fxgroup { font-size: 10px; color: var(--dim); align-self: center; margin-right: 2px; }
+.fxchip {
+  font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+}
+.fxchip.attr { border-color: #3a5a80; color: var(--accent); }
+.fxchip.glob { border-color: #2c5240; color: var(--accent2); }
+.fxchip.fn   { border-color: #5a4a80; color: #b9a5f0; }
+.fxchip.act  { border-color: #7a4a3a; color: var(--warn); }
+.fxchip:hover { background: var(--border); }
+.fxstatus { margin-top: 4px; font-size: 11px; }
+.fxstatus .bad  { color: var(--error); }
+.fxstatus .hint { color: var(--warn); }
+.fxstatus .ok   { color: var(--accent2); }
+.pedit input.invalid { border-color: var(--error); }
+
 /* ---------- batch ---------- */
 #batch {
   margin: 10px;

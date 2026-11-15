@@ -89,7 +89,8 @@ module OpenSketchupDC
         when "deleteParam"   then cmd_delete_param(p)
         when "batchSet"      then cmd_batch_set(p)
         when "redraw"        then cmd_redraw(p)
-        when "convert"       then with_entity(p["entityId"]) do |e|
+        when "validateFormula" then cmd_validate_formula(p)
+        when "convert" then with_entity(p["entityId"]) do |e|
           Convert.to_open_dc(e)
           push_state
         end
@@ -133,6 +134,13 @@ module OpenSketchupDC
       def cmd_set_meta(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
+          if p["field"] == "formula" && !p["value"].to_s.strip.empty?
+            v = validate_formula(e, p["value"].to_s, p["name"].to_s)
+            unless v["ok"]
+              push_error("Formula not saved: #{v['errors'].join('; ')}")
+              next
+            end
+          end
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set #{p['name']}_#{p['field']}") do
             DCWriter.set_meta(e, p["name"], p["field"], p["value"], dict_name: dict_name)
           end
@@ -144,6 +152,13 @@ module OpenSketchupDC
       def cmd_add_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
+          if p["formula"].to_s.strip != ""
+            v = validate_formula(e, p["formula"].to_s, p["name"].to_s)
+            unless v["ok"]
+              push_error("Formula not saved: #{v['errors'].join('; ')}")
+              next
+            end
+          end
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Add #{p['name']}") do
             DCWriter.add_param(e,
                                name: p["name"],
@@ -205,6 +220,75 @@ module OpenSketchupDC
         dict_name == OS_DC_DICT ? Engine.mark_dirty(entity) : DCBridge.redraw!(entity)
       end
 
+      def cmd_validate_formula(p)
+        with_entity(p["entityId"]) do |e|
+          push_validation(p.merge(validate_formula(e, p["formula"].to_s, p["name"].to_s)))
+        end
+      end
+
+      # Static check of a formula against this entity's attribute set:
+      # syntax via the real parser, unknown function names, and unresolved
+      # attribute references (with did-you-mean suggestions). Scopes that
+      # can't be resolved from the panel (parent!/node! on a nested entity)
+      # produce hints, not errors.
+      def validate_formula(entity, src, attr_name)
+        dict_name = DCReader.dict_name_for(entity)
+        ps = DCReader.read(entity, dict_name: dict_name)
+        allow_actions = attr_name == "onclick"
+        errors = []
+        hints = []
+
+        begin
+          ast = Expression.parse(Expression.strip_eq(src))
+        rescue Expression::Error => e
+          return { "ok" => false, "errors" => ["syntax: #{e.message}"], "hints" => hints }
+        end
+
+        Expression.walk(ast) do |node|
+          next unless node[0] == :call
+
+          fn = node[1]
+          next if Expression::FUNCTIONS.include?(fn)
+          next if allow_actions && Expression::Evaluator::ACTIONS.include?(fn)
+
+          errors << "unknown function '#{fn}'"
+        end
+
+        names = ps.params.map(&:name)
+        Expression.refs(src).each do |scope, n|
+          case scope
+          when nil
+            next if names.include?(n)
+            next if n == "copy" && names.include?("copies")
+
+            sug = DidYouMean::SpellChecker.new(dictionary: names).correct(n).first
+            errors << "unknown attribute '#{n}'" +
+                      (sug ? " - did you mean '#{sug}'?" : "")
+          when "global"
+            g = DCReader.dict_of(Sketchup.active_model, dict_name)
+            errors << "no global attribute '#{n}'" unless DCReader.dict_key?(g, n)
+          when "parent"
+            hints << "parent!#{n} resolves when this component is nested - not verified here"
+          else
+            node = top_level?(entity) &&
+                   Interact.node_named(scope, nil, entity, Sketchup.active_model)
+            if node.nil?
+              hints << "node '#{scope}' not verified here"
+            else
+              nps = DCReader.read(node, dict_name: DCReader.dict_name_for(node))
+              errors << "node '#{scope}' has no attribute '#{n}'" if nps[n].nil?
+            end
+          end
+        end
+        { "ok" => errors.empty?, "errors" => errors.uniq, "hints" => hints.uniq }
+      end
+
+      def top_level?(entity)
+        entity.parent.is_a?(Sketchup::Model)
+      rescue StandardError
+        false
+      end
+
       # Convert a UI-entered value to its stored form. Numbers typed into a
       # length-unit field arrive in that field's display units. For classic
       # DCs the formula slot interprets bare numbers in _<attr>_units, so the
@@ -262,6 +346,16 @@ module OpenSketchupDC
 
         json = JSON.generate(msg.to_s)
         @dialog.execute_script("window.OpenDC && window.OpenDC.error(#{json})")
+      end
+
+      # One-shot answer to a JS validateFormula request (not a state push).
+      def push_validation(payload)
+        return if @dialog.nil?
+
+        json = JSON.generate(json_safe(payload))
+        @dialog.execute_script("window.OpenDC && window.OpenDC.onValidation(#{json})")
+      rescue StandardError => e
+        puts "#{PLUGIN_NAME}: push_validation failed - #{e.message}"
       end
 
       # Called by the entity observer for both entities and dictionaries.

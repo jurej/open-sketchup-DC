@@ -267,6 +267,14 @@ module OpenSketchupDC
       # ------------------------------------------------------------------
       # Evaluator
       # ------------------------------------------------------------------
+
+      # Pure formula functions the evaluator implements. Kept next to
+      # eval_call's dispatch for validation (formula builders reject unknown
+      # function names before the formula is stored).
+      FUNCTIONS = %w[IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
+                     SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
+                     LARGEST SMALLEST OPTIONINDEX OPTIONVALUE].freeze
+
       class Evaluator
         # DC action functions (side effects). Handled via ctx[:fx] - a pure
         # eval context must not run them.
