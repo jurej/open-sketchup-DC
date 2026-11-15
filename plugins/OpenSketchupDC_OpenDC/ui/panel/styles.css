@@ -1,0 +1,179 @@
+:root {
+  --bg: #1e1f24;
+  --bg2: #26272e;
+  --bg3: #2f313a;
+  --fg: #e6e6ea;
+  --dim: #9a9daa;
+  --accent: #4f9cf9;
+  --accent2: #7fd0a2;
+  --warn: #f0b25a;
+  --error: #e5646c;
+  --border: #3a3c46;
+  --radius: 6px;
+  font-size: 13px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- toolbar ---------- */
+#toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+#toolbar .title { font-weight: 600; letter-spacing: .02em; }
+#toolbar input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+#toolbar button { flex: 0 0 auto; }
+
+/* ---------- generic controls ---------- */
+input, select, button, textarea {
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 7px;
+  font: inherit;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.small { padding: 1px 7px; font-size: 12px; }
+
+/* ---------- banner / toast ---------- */
+#banner {
+  padding: 8px 12px;
+  background: #3d3324;
+  color: var(--warn);
+  border-bottom: 1px solid var(--border);
+}
+#toast {
+  position: fixed;
+  bottom: 12px; left: 12px; right: 12px;
+  padding: 9px 12px;
+  background: #47272b;
+  color: var(--error);
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+  z-index: 50;
+}
+
+/* ---------- entity cards ---------- */
+.card {
+  margin: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.card > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg3);
+}
+.card > header .name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #3a3f52;
+  color: var(--accent);
+}
+.badge.osdc { background: #2c4538; color: var(--accent2); }
+.badge.kind { background: #40424e; color: var(--dim); }
+
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tabs button {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px;
+  color: var(--dim);
+}
+.tabs button.active { color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+
+.params { padding: 6px 0; }
+
+/* ---------- param rows ---------- */
+.prow {
+  display: grid;
+  grid-template-columns: 40% 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+}
+.prow:hover { background: rgba(255,255,255,.03); }
+.prow .pname { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .pname b { color: var(--fg); font-weight: 500; }
+.prow input, .prow select { width: 100%; min-width: 0; }
+.prow .ro { color: var(--fg); }
+.prow.internal .pname { font-style: italic; }
+.prow .err { color: var(--error); font-size: 11px; grid-column: 1 / -1; }
+.prow .formula-hint { font-size: 10px; color: var(--accent); }
+
+/* ---------- advanced editor ---------- */
+.pedit {
+  border-top: 1px dashed var(--border);
+  margin: 4px 10px 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.pedit label { display: block; font-size: 11px; color: var(--dim); }
+.pedit input, .pedit select { width: 100%; margin-top: 2px; }
+.pedit .full { grid-column: 1 / -1; }
+.pedit .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+/* ---------- batch ---------- */
+#batch {
+  margin: 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg2);
+}
+#batch > header {
+  padding: 7px 10px;
+  font-weight: 600;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- add form ---------- */
+.addform {
+  display: flex;
+  gap: 5px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+.addform input[name="name"] { width: 30%; }
+.addform input[name="label"] { width: 25%; }
+.addform input[name="value"] { width: 20%; }
+
+/* ---------- empty ---------- */
+#empty { text-align: center; padding: 40px 20px; color: var(--dim); }
+#empty .hint { font-size: 12px; }
+code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; }

@@ -1,0 +1,52 @@
+module OpenSketchupDC
+  module OpenDC
+    # Menu commands.
+    module Commands
+      module_function
+
+      def convert_selection
+        model = Helpers.require_model
+        return unless model
+
+        ts = Selection.targets(model).select { |t| DCReader.engine_of(t) == :classic }
+        if ts.empty?
+          UI.messagebox("Select one or more classic dynamic components to convert.")
+          return
+        end
+
+        count = ts.count { |t| Convert.to_open_dc(t) }
+        Panel.schedule_push
+        UI.messagebox("Converted #{count} component(s) to Open DC.")
+      end
+
+      def revert_selection
+        model = Helpers.require_model
+        return unless model
+
+        ts = Selection.targets(model).select { |t| DCReader.engine_of(t) == :osdc }
+        if ts.empty?
+          UI.messagebox("Select one or more Open DC components to revert.")
+          return
+        end
+
+        count = ts.count { |t| Convert.to_classic(t) }
+        Panel.schedule_push
+        UI.messagebox("Reverted #{count} component(s) to classic DC.")
+      end
+
+      def recompute_selection
+        model = Helpers.require_model
+        return unless model
+
+        ts = Selection.targets(model)
+        ts.each do |t|
+          if DCReader.engine_of(t) == :osdc
+            Engine.mark_dirty(t)
+          else
+            DCBridge.redraw!(t)
+          end
+        end
+      end
+    end
+  end
+end

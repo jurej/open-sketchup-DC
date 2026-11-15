@@ -1,0 +1,79 @@
+require:
+  - rubocop-sketchup
+
+AllCops:
+  NewCops: disable
+  TargetRubyVersion: 3.2
+  Exclude:
+    # Vendored upstream code - lint fixes would be lost on re-vendoring.
+    - plugins/OpenSketchupDC_OpenDC/helpers.rb
+    - vendor/**/*
+  SketchUp:
+    SourcePath: plugins
+    TargetSketchUpVersion: 2024
+
+# Tests run outside SketchUp - not extension code.
+SketchupRequirements/LoadPath:
+  Exclude:
+    - tests/**/*
+SketchupRequirements/ExtensionNamespace:
+  Exclude:
+    - tests/**/*
+SketchupSuggestions/FileEncoding:
+  Exclude:
+    - tests/**/*
+
+# EW requires Author_Plugin.rb naming for the registration file.
+Naming/FileName:
+  Exclude:
+    - plugins/OpenSketchupDC_OpenDC.rb
+
+# Intentional by design: bridge to Trimble's DC engine internals.
+SketchupSuggestions/DynamicComponentInternals:
+  Exclude:
+    - plugins/OpenSketchupDC_OpenDC/core/dc_bridge.rb
+Style/GlobalVars:
+  Exclude:
+    - plugins/OpenSketchupDC_OpenDC/core/dc_bridge.rb
+
+# The engine evaluates DC trees from the model root (deterministic, matches
+# classic DC traversal) - model.entities is correct here, not active_entities.
+SketchupSuggestions/ModelEntities:
+  Exclude:
+    - plugins/OpenSketchupDC_OpenDC/core/engine.rb
+    - plugins/OpenSketchupDC_OpenDC/registry_caps.rb
+
+# SketchUp API observer callbacks are camelCase by contract.
+Naming/MethodName:
+  Exclude:
+    - plugins/OpenSketchupDC_OpenDC/observers.rb
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/Documentation:
+  Enabled: false
+
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+Naming/MethodParameterName:
+  AllowedNames: [e, v, n, t, k, s, c, l, r, i, p, f, x, y, z, id, kw, ps, a, b,
+                 op, fn]
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Metrics/MethodLength:
+  Max: 25
+Metrics/AbcSize:
+  Max: 30
+Metrics/CyclomaticComplexity:
+  Max: 13
+Metrics/PerceivedComplexity:
+  Max: 13
+Metrics/ModuleLength:
+  Max: 300
+Metrics:
+  Exclude:
+    - tests/**/*

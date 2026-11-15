@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Open DC</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="toolbar">
+    <span class="title">Open DC</span>
+    <input id="search" type="search" placeholder="Filter parameters…">
+    <button id="btn-refresh" title="Refresh">⟳</button>
+    <button id="btn-redraw" title="Recompute / redraw">▶</button>
+  </header>
+
+  <div id="banner" class="hidden"></div>
+  <div id="toast" class="hidden"></div>
+
+  <main id="content">
+    <section id="batch" class="hidden"></section>
+    <section id="entities"></section>
+    <div id="empty" class="hidden">
+      <p>No dynamic components selected.</p>
+      <p class="hint">Select a component with <code>dynamic_attributes</code>
+         or <code>open_dc</code> attributes.</p>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
