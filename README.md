@@ -77,4 +77,8 @@ future UI: `Sketchup.active_model.set_attribute("open_dc", "height", 100)`.
 See `AGENTS.md` and `docs/architecture.md`. Unit tests (no SketchUp needed):
 `ruby -Itest tests/test_expression.rb` etc.
 
-MIT licensed.
+## License
+
+[GNU AGPL-3.0](LICENSE). Derivative works — including software offered to
+users over a network — must be published under the same license with source
+code available.
