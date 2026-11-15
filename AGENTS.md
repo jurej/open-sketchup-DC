@@ -23,7 +23,11 @@ repo's `AGENTS.md` first — all conventions apply here.
   schema plus `_engine`, `_legacy_dc`, `_osdc_copy` keys.
 - A component is owned by exactly one engine: Convert deletes the classic
   dict (snapshot under `_legacy_dc`); Revert restores it.
-- See `docs/attribute-format.md` for the full schema.
+- See `docs/attribute-format.md` for the full schema. Key rule: for classic,
+  `_<attr>_formula` is the authoritative user input and `<attr>` is only the
+  computed cache — `DCWriter.set_value` writes the formula slot accordingly.
+- Values in classic dicts are strings (`"5"`, `"FALSE"`); Trimble's engine
+  crashes on non-string types like Ruby booleans — stringify classic writes.
 
 ## Layering
 

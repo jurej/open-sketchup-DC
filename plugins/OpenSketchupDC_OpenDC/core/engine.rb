@@ -85,6 +85,7 @@ module OpenSketchupDC
         ctx = { inst: inst, ps: ps, computed: computed, model: model }
         ents = child_entities_collection(inst)
         child_entities(inst).each do |child|
+          next unless child.valid? # sync_copies may erase siblings mid-iteration
           next unless dynamic_child?(child)
           next if generated_copy?(child)
 
@@ -253,8 +254,13 @@ module OpenSketchupDC
       # Copies
       # ------------------------------------------------------------------
 
+      # Effective copies count: instance dict first, then definition default.
       def copies_of(child)
-        DCReader.dict_get(DCReader.dict_of(child, OS_DC_DICT), "copies").to_i
+        v = DCReader.dict_get(DCReader.dict_of(child, OS_DC_DICT), "copies")
+        if v.nil? && child.is_a?(Sketchup::ComponentInstance)
+          v = DCReader.dict_get(DCReader.dict_of(child.definition, OS_DC_DICT), "copies")
+        end
+        v.to_i
       end
 
       def copies_of_group(entities, original)

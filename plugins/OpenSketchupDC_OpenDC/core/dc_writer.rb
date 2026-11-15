@@ -6,6 +6,12 @@ module OpenSketchupDC
     #   meta edits   -> definition dict (components) or instance dict (groups),
     #                   as _<attr>_<field>
     #   new params   -> full meta cluster on the definition/group dict
+    #
+    # Classic DC quirk (verified against Trimble's engine): _<name>_formula is
+    # the authoritative user input slot; <name> is only the computed cache the
+    # engine rewrites on redraw. So value writes for the classic dict target
+    # the formula slot, while our own open_dc dict keeps literal values on the
+    # plain key.
     module DCWriter
       module_function
 
@@ -14,11 +20,20 @@ module OpenSketchupDC
       end
 
       def set_value(entity, name, value, dict_name: DC_DICT)
-        entity.set_attribute(dict_name, name.to_s.downcase, value)
+        key = value_key(name, dict_name)
+        value = value.to_s if dict_name == DC_DICT
+        entity.set_attribute(dict_name, key, value)
       end
 
       def set_default(entity, name, value, dict_name: DC_DICT)
-        owner_for(entity).set_attribute(dict_name, name.to_s.downcase, value)
+        key = value_key(name, dict_name)
+        value = value.to_s if dict_name == DC_DICT
+        owner_for(entity).set_attribute(dict_name, key, value)
+      end
+
+      # Authoritative storage slot for user-entered values per engine.
+      def value_key(name, dict_name)
+        dict_name == DC_DICT ? "_#{name.to_s.downcase}_formula" : name.to_s.downcase
       end
 
       def set_meta(entity, name, field, value, dict_name: DC_DICT)
@@ -35,13 +50,16 @@ module OpenSketchupDC
                     access: ACCESS_TEXTBOX, value: "", units: "STRING",
                     options: nil, formula: nil, dict_name: DC_DICT)
         n = name.to_s.downcase
-        owner_for(entity).set_attribute(dict_name, n, value)
+        stored = dict_name == DC_DICT ? value.to_s : value
+        owner_for(entity).set_attribute(dict_name, n, stored)
         set_meta(entity, n, "label", label || name.to_s)
         set_meta(entity, n, "access", access)
         set_meta(entity, n, "units", units)
         set_meta(entity, n, "formlabel", formlabel || label || name.to_s)
         set_meta(entity, n, "options", options) unless options.nil?
-        set_meta(entity, n, "formula", formula) unless formula.nil?
+        f = formula
+        f = value.to_s if f.nil? && dict_name == DC_DICT
+        set_meta(entity, n, "formula", f) unless f.nil?
         n
       end
 

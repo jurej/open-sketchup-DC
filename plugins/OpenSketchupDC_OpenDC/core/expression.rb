@@ -418,7 +418,10 @@ module OpenSketchupDC
         end
 
         def truthy(v)
-          !(v.nil? || v == false || v.zero? || v == 0.0 || v == "")
+          return false if v.nil? || v == false || v == ""
+          return v != 0 if v.is_a?(Numeric)
+
+          true
         end
 
         def str(v)

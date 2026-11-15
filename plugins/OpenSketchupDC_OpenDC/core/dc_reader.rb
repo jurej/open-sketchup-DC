@@ -121,7 +121,11 @@ module OpenSketchupDC
         if kind == :component && inst
           override = dict_key?(inst, name) ? dict_get(inst, name) : dict_get(inst, "_inst_#{name}")
           META_FIELDS.each do |f|
+            # Per-instance meta overrides live in two places: _inst__<a>_<f>
+            # (nested-component form) and plain _<a>_<f> on the instance dict,
+            # which is where classic DC stores per-instance formula overrides.
             v = dict_get(inst, "_inst__#{name}_#{f}")
+            v = dict_get(inst, "_#{name}_#{f}") if v.nil?
             override_meta[f] = v unless v.nil?
           end
         end

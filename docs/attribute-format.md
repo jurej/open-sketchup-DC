@@ -27,8 +27,27 @@ Keys are always lowercase. Underscore-prefixed keys are meta/system fields.
   _lastmodified       = "..."
   _scaletool          = <bitmask>
   ```
-- **Instance dictionary** — plain-key overrides for values that differ
-  from the definition defaults.
+- **Instance dictionary** — per-instance overrides. Verified against
+  Trimble's engine: the instance stores `_<name>_formula` (the authoritative
+  user input) plus a plain `<name>` computed cache the engine rewrites on
+  redraw.
+
+### Authoritative input vs computed cache (verified, SketchUp 2026)
+
+For the classic format, `_<name>_formula` is the **authoritative user
+input** — not just for `=expr` formulas but for every editable value.
+`<name>` is only the engine's computed cache:
+
+- Typing `5` in Component Options stores `"5"` (or `"5.0"`) in
+  `_lenx_formula`; redraw evaluates it and writes `lenx = "5"` as cache.
+- Writing `<name>` directly has no lasting effect — the next redraw
+  overwrites it from `_<name>_formula`.
+- String values are stored bare in the formula slot (`Red`, not `"Red"`);
+  the evaluator treats unquoted words as string literals.
+- Booleans must be strings (`"FALSE"`); Trimble's engine crashes
+  (`to_f` on `false`) if a Ruby boolean lands in `hidden`.
+- Per-instance overrides are `_<name>_formula` on the **instance** dict
+  (siblings keep their own values — verified).
 
 ### Nested component instance (inside a DC)
 
@@ -54,10 +73,10 @@ Model-level globals for `global!name` references live on the model's own
 
 ## Write rules (DCWriter)
 
-| Operation | Target dictionary | Key |
+| Operation | `dynamic_attributes` (classic) | `open_dc` |
 |---|---|---|
-| user value edit | instance | `<name>` |
-| default edit | definition (group: instance) | `<name>` |
-| meta edit | definition (group: instance) | `_<name>_<field>` |
-| new attribute | definition (group: instance) | value + full meta cluster |
-| system key | definition (group: instance) | raw `_<key>` |
+| user value edit | instance `_<name>_formula` (as string) | instance `<name>` (typed) |
+| default edit | owner `_<name>_formula` (as string) | owner `<name>` (typed) |
+| meta edit | owner `_<name>_<field>` | owner `_<name>_<field>` |
+| new attribute | owner: `<name>` (string cache) + full meta + `_<name>_formula` | owner: `<name>` + full meta |
+| system key | owner raw `_<key>` | owner raw `_<key>` |

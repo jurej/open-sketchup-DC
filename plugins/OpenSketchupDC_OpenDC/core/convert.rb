@@ -46,8 +46,10 @@ module OpenSketchupDC
         return if dcd.nil?
 
         snapshot = {}
-        dcd.each { |k, v| snapshot[k.to_s] = encode(v) }
-        snapshot.each { |k, v| t.set_attribute(OS_DC_DICT, k, decode(v)) }
+        dcd.each do |k, v|
+          snapshot[k.to_s] = encode(v)
+          t.set_attribute(OS_DC_DICT, k, v)
+        end
 
         t.set_attribute(OS_DC_DICT, "_engine", ENGINE_OS)
         t.set_attribute(OS_DC_DICT, "_legacy_dc", JSON.generate(snapshot))
