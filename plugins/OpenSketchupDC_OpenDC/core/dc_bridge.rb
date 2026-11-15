@@ -25,6 +25,18 @@ module OpenSketchupDC
         false
       end
 
+      # Same engine redraw without its own undo step - for animation ticks
+      # inside a caller-managed transaction.
+      def redraw_no_undo!(entity)
+        return false unless available? && entity&.valid?
+
+        $dc_observers.get_latest_class.redraw(entity)
+        true
+      rescue StandardError => e
+        puts "#{PLUGIN_NAME}: DC redraw failed - #{e.message}"
+        false
+      end
+
       def redraw_all!(entities)
         entities.count { |e| redraw!(e) }
       end

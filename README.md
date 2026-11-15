@@ -42,6 +42,11 @@ Requires **SketchUp 2024+** (Windows/Mac).
     an editor; `*` marks instance overrides).
   - Select multiple DCs → a **Batch edit** section appears with the shared
     parameters (`<mixed>` = different current values).
+- *Extensions → Open DC → Interact Tool* — click a DC to run its `onClick`
+  formula (works on nested children: the click bubbles up to the first
+  ancestor with `onClick`, like the classic Interact tool). Supports
+  `SET`, `REDRAW`, `ALERT`, `GOTOSCENE` on both engines; `ANIMATE*` steps
+  directly to the next state (interpolation is a follow-up).
 - *Extensions → Open DC → Convert / Revert* — switch engines per component.
 - *Recompute Selected* — manual redraw/evaluate.
 

@@ -16,6 +16,7 @@ module OpenSketchupDC
     Sketchup.require(File.join(PLUGIN_DIR, "core", "convert"))
     Sketchup.require(File.join(PLUGIN_DIR, "selection"))
     Sketchup.require(File.join(PLUGIN_DIR, "observers"))
+    Sketchup.require(File.join(PLUGIN_DIR, "interact"))
     Sketchup.require(File.join(PLUGIN_DIR, "commands"))
     Sketchup.require(File.join(PLUGIN_DIR, "registry_caps"))
     Sketchup.require(File.join(PLUGIN_DIR, "ui", "panel"))
@@ -23,6 +24,7 @@ module OpenSketchupDC
     unless file_loaded?(__FILE__)
       menu = UI.menu("Extensions").add_submenu("Open DC")
       menu.add_item("Parameter Panel") { Panel.toggle }
+      menu.add_item("Interact Tool") { Commands.interact }
       menu.add_separator
       menu.add_item("Recompute Selected") { Commands.recompute_selection }
       menu.add_separator

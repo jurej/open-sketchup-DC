@@ -268,10 +268,16 @@ module OpenSketchupDC
       # Evaluator
       # ------------------------------------------------------------------
       class Evaluator
+        # DC action functions (side effects). Handled via ctx[:fx] - a pure
+        # eval context must not run them.
+        ACTIONS = %w[SET ANIMATE ANIMATESLOW ANIMATEFAST ANIMATECUSTOM
+                     REDRAW ALERT GOTOSCENE].freeze
+
         def initialize(ctx = {})
           @get  = ctx[:get]  || ->(n) { raise Error, "undefined attribute '#{n}'" }
           @ref  = ctx[:ref]  || ->(s, n) { raise Error, "undefined reference '#{s}!#{n}'" }
           @meta = ctx[:meta] || ->(_n, _f) { nil }
+          @fx   = ctx[:fx]
         end
 
         def eval_node(node)
@@ -385,6 +391,11 @@ module OpenSketchupDC
             opt = option_list(an).find { |o| o[0] == label }
             opt && opt[1]
           else
+            if ACTIONS.include?(fn)
+              raise Error, "#{fn} requires an onClick action context" if @fx.nil?
+
+              return @fx.call(fn, args.map { |a| eval_node(a) })
+            end
             raise Error, "unknown function '#{fn}'"
           end
         end

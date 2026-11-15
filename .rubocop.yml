@@ -38,15 +38,18 @@ Style/GlobalVars:
 
 # The engine evaluates DC trees from the model root (deterministic, matches
 # classic DC traversal) - model.entities is correct here, not active_entities.
+# Interact's node lookup similarly scans the root for top-level DCs.
 SketchupSuggestions/ModelEntities:
   Exclude:
     - plugins/OpenSketchupDC_OpenDC/core/engine.rb
     - plugins/OpenSketchupDC_OpenDC/registry_caps.rb
+    - plugins/OpenSketchupDC_OpenDC/interact.rb
 
-# SketchUp API observer callbacks are camelCase by contract.
+# SketchUp API observer + tool callbacks are camelCase by contract.
 Naming/MethodName:
   Exclude:
     - plugins/OpenSketchupDC_OpenDC/observers.rb
+    - plugins/OpenSketchupDC_OpenDC/interact.rb
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes

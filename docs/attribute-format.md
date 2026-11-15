@@ -63,6 +63,17 @@ Write rules that work against Trimble's engine (verified):
   therefore stores display-unit numbers for classic DCs and only converts
   display→inches for `open_dc` (whose engine stores inches internally).
 
+### `onclick` behavior cluster (verified on a real door DC)
+
+- `onclick` = action formula, e.g. `SET("zzzOdprto",0,15,30,45,60,75,90)` —
+  a plain literal attr (no `_onclick_formula` needed).
+- `_onclick_state1` on the definition dict tracks the last SET state index.
+- `SET`/`ANIMATE` writes target the attr's input slot: `_<name>_formula`
+  when the attr is formula-backed (the engine recomputes and would clobber
+  a plain-key write), `<name>` otherwise. The next state is computed from
+  the *formula-slot* value, not the lagging evaluated cache, so consecutive
+  clicks advance correctly under deferred eval.
+
 ### `_<name>_error` = eval status slot
 
 Holds the last formula eval result, either a plain value or an HTML span

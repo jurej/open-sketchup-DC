@@ -34,6 +34,11 @@ module OpenSketchupDC
         UI.messagebox("Reverted #{count} component(s) to classic DC.")
       end
 
+      def interact
+        model = Helpers.require_model
+        model&.select_tool(Interact::Tool.new)
+      end
+
       def recompute_selection
         model = Helpers.require_model
         return unless model

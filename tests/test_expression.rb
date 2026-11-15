@@ -90,6 +90,24 @@ class TestExpression < Minitest::Test
     assert_raises(E::Error) { E.eval!("FOOBAR(1)") }
   end
 
+  def test_action_functions_need_fx
+    assert_raises(E::Error) { E.eval!('SET("x",1,2)', ctx({})) }
+    assert_raises(E::Error) { E.eval!("REDRAW()", ctx({})) }
+  end
+
+  def test_action_functions_delegate_to_fx
+    calls = []
+    fx = lambda { |fn, args|
+      calls << [fn, args]
+      args[-1]
+    }
+    c = ctx({}).merge(fx: fx)
+    assert_in_delta 2.0, E.eval!('SET("x",1,2)', c), 1e-9
+    assert_equal [["SET", ["x", 1.0, 2.0]]], calls
+    assert_nil E.eval!("REDRAW()", c)
+    assert_equal [["SET", ["x", 1.0, 2.0]], ["REDRAW", []]], calls
+  end
+
   def test_refs_extraction
     deps = E.refs("width*2 + parent!h + global!k")
     assert_includes deps, [nil, "width"]
