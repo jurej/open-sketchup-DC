@@ -9,16 +9,6 @@ window.OpenDC = (function () {
   var fxValid = {};   // entityId::name -> last validation ok flag (true/false/undefined)
   var fxReqSeq = 0;
 
-  // Function chip templates (inserted at caret). Parens/commas left for the
-  // user to fill - like block-builder "blocks" but text-native.
-  var FN_CHIPS = [
-    "IF(,,)", "CHOOSE(,,)", 'CURRENT("")', "MIN(,)", "MAX(,)", "ROUND(,)",
-    "OPTIONINDEX(\"\")", "OPTIONVALUE(,\"\")"
-  ];
-  var ACTION_CHIPS = [
-    'SET("",,)', 'ANIMATE("",,)', "REDRAW()", 'ALERT("")', 'GOTOSCENE("")'
-  ];
-
   function send(action, payload) {
     sketchup.dc(JSON.stringify({ action: action, payload: payload || {} }));
   }
@@ -158,47 +148,17 @@ window.OpenDC = (function () {
     return html;
   }
 
-  function chip(text, ins, cls, title) {
-    return '<button type="button" class="fxchip ' + cls + '" data-ins="' + esc(ins) +
-      '" title="' + esc(title || ins) + '">' + esc(text) + '</button>';
-  }
-
-  // Click-to-insert palette: every existing attribute on the entity as a
-  // chip (no manual name typing -> no attr-name typos), plus global!s,
-  // function templates, and onClick actions when editing that attribute.
-  function paletteHtml(e, p) {
-    var out = ['<div class="fxpalette">'];
-    out.push('<span class="fxgroup">attrs</span>');
-    (e.params || []).forEach(function (x) {
-      if (!x.internal)
-        out.push(chip(x.name, x.name, "attr", x.displayName || x.name));
-    });
-    if ((e.params || []).some(function (x) { return x.name === "copies"; }))
-      out.push(chip("copy", "copy", "attr", "copy index inside generated copies"));
-    (state.globals || []).forEach(function (g) {
-      out.push(chip("global!" + g.name, "global!" + g.name, "glob", "model-global attribute"));
-    });
-    out.push('<span class="fxgroup">fns</span>');
-    FN_CHIPS.forEach(function (t) { out.push(chip(t.replace(/\(.*/, "") + "()", t, "fn", t)); });
-    if (p.name === "onclick") {
-      out.push('<span class="fxgroup">actions</span>');
-      ACTION_CHIPS.forEach(function (t) { out.push(chip(t.replace(/\(.*/, "") + "()", t, "act", t)); });
-    }
-    out.push('</div>');
-    return out.join("");
-  }
-
   function editorHtml(entityId, p) {
     var e = (state.entities || []).find(function (x) { return x.entityId === entityId; }) || { params: [] };
     var id = esc(entityId);
     var n = esc(p.name);
     return '<div class="pedit" data-pedit="' + n + '">' +
-      '<div class="full"><label>formula - type or click an attribute below to insert it</label>' +
+      '<div class="full"><label>formula <button type="button" class="fxdocs" ' +
+      'data-fxdocs title="Function &amp; syntax reference">&#402;(x)</button></label>' +
       '<div class="fxedit">' +
       '<div class="fxed" contenteditable="true" spellcheck="false" autocapitalize="off"></div>' +
       '<input type="hidden" data-f="formula" value="' + esc(p.formula || "") + '">' +
       '<div class="fxlist hidden"></div></div>' +
-      paletteHtml(e, p) +
       '<div class="fxstatus"></div></div>' +
       '<div><label>default' + (p.formula ? " (formula-driven)" : "") + '</label>' +
       '<input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
@@ -298,14 +258,8 @@ window.OpenDC = (function () {
       });
     });
 
-    // Formula builder: mousedown (not click) keeps the caret inside the
-    // contenteditable so chips insert at the caret position.
-    host.querySelectorAll(".fxchip[data-ins]").forEach(function (c) {
-      c.addEventListener("mousedown", function (ev) {
-        ev.preventDefault();
-        var ed = c.closest(".pedit").querySelector(".fxed");
-        fxInsertToken(ed, c.getAttribute("data-ins"));
-      });
+    host.querySelectorAll("[data-fxdocs]").forEach(function (b) {
+      b.addEventListener("click", function () { send("fxDocs"); });
     });
 
     host.querySelectorAll(".fxed").forEach(function (ed) {
@@ -671,15 +625,6 @@ window.OpenDC = (function () {
       fxCaretAfter(node);
     }
     fxSync(ed);
-  }
-
-  // Insert a palette chip at the caret (or at the end when unfocused).
-  // Names -> attr pills, "scope!name" -> ref pills, fn templates ->
-  // function pill + "(args" text with the caret inside the parens.
-  function fxInsertToken(ed, ins) {
-    if (/[()]/.test(ins)) { fxInsertAtCaret(ed, fxFnNodes(ins), 1); return; }
-    var node = /!/i.test(ins) ? fxPillEl("ref", ins) : fxPillEl("attr", ins);
-    fxInsertAtCaret(ed, [node], null);
   }
 
   function fxKeyNav(ed, ev) {

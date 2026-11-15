@@ -90,6 +90,7 @@ module OpenSketchupDC
         when "batchSet"      then cmd_batch_set(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
+        when "fxDocs"        then cmd_fx_docs
         when "convert" then with_entity(p["entityId"]) do |e|
           Convert.to_open_dc(e)
           push_state
@@ -315,6 +316,98 @@ module OpenSketchupDC
         DCReader.read(entity, dict_name: dict_name)[name]&.units
       rescue StandardError
         nil
+      end
+
+      # ------------------------------------------------------------------
+      # Formula reference window
+      # ------------------------------------------------------------------
+
+      FX_REFERENCE = [
+        ["References", [
+          ["name", "attribute on this component"],
+          ["parent!name", "attribute on the parent component"],
+          ["global!name", "model-global attribute (open_dc)"],
+          ["node!name", "attribute on a sibling node"],
+          ["copy", "index of this generated copy (when copies &gt; 0)"]
+        ]],
+        ["Functions", [
+          ["IF(test, then, else)", "conditional value"],
+          ["CHOOSE(index, v1, v2, ...)", "pick the index-th value (1-based)"],
+          ["CURRENT(\"name\")", "current value of an attribute"],
+          ["MIN(a, b, ...) / MAX(a, b, ...)", "smallest / largest of the arguments"],
+          ["ROUND(x, n) / INT / FLOOR / CEILING", "rounding"],
+          ["ABS(x) / SQRT(x)", "absolute value / square root"],
+          ["SIN / COS / TAN / ASIN / ACOS / ATAN", "trigonometry (radians)"],
+          ["DEGREES(rad) / RADIANS(deg)", "angle conversion"],
+          ["PI()", "3.14159..."],
+          ["LARGEST / SMALLEST(list, k)", "k-th largest / smallest value"],
+          ["OPTIONINDEX(\"name\")", "index of the selected LIST option"],
+          ["OPTIONVALUE(\"name\", \"label\")", "value mapped to a LIST option label"]
+        ]],
+        ["Actions (onClick only)", [
+          ["SET(\"name\", v1, v2, ...)", "cycle the attribute through the values"],
+          ["ANIMATE*(\"name\", ...)", "animate through the values"],
+          ["REDRAW()", "force a redraw"],
+          ["ALERT(\"msg\")", "show a message box"],
+          ["GOTOSCENE(\"scene\")", "activate a scene page"]
+        ]],
+        ["Syntax", [
+          ["+ - * / ^", "arithmetic; ^ = power"],
+          ["&amp;", "string concatenation"],
+          ["== != &lt; &gt; &lt;= &gt;=", "comparison; = also works"],
+          ["AND / OR / NOT / TRUE / FALSE", "logic keywords"],
+          ["4\"  2'  3cm  5mm", "feet/inch/unit suffixes on numbers"],
+          ["\"text\"", "string literal"]
+        ]]
+      ].freeze
+
+      def cmd_fx_docs
+        if @fx_dialog.nil?
+          @fx_dialog = ::UI::HtmlDialog.new(
+            dialog_title: "Open DC - Formula Reference",
+            preferences_key: "#{PLUGIN_ID}_fxdocs",
+            scrollable: true,
+            resizable: true,
+            width: 480,
+            height: 560,
+            min_width: 320,
+            min_height: 300,
+            style: ::UI::HtmlDialog::STYLE_UTILITY
+          )
+          @fx_dialog.set_can_close do
+            @fx_dialog = nil
+            true
+          end
+        end
+        @fx_dialog.set_html(functions_reference_html)
+        @fx_dialog.show
+        @fx_dialog.bring_to_front
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      def functions_reference_html
+        rows = FX_REFERENCE.map do |section, items|
+          "<h2>#{section}</h2><table>" +
+            items.map do |sig, desc|
+              "<tr><td class='sig'>#{sig}</td><td class='desc'>#{desc}</td></tr>"
+            end.join("") + "</table>"
+        end.join("")
+        <<~HTML
+          <!DOCTYPE html><html><head><meta charset="utf-8"><style>
+            body{background:#17181c;color:#d8d8de;font:13px/1.5 "Segoe UI",sans-serif;margin:14px}
+            h1{font-size:15px;margin:0 0 10px;color:#4f9cf9}
+            h2{font-size:12px;text-transform:uppercase;color:#8a8a93;margin:16px 0 6px;border-bottom:1px solid #2a2b31;padding-bottom:4px}
+            table{width:100%;border-collapse:collapse}
+            td{padding:3px 6px;vertical-align:top}
+            tr:nth-child(odd){background:#1e1f24}
+            .sig{font-family:Consolas,monospace;color:#b9a5f0;white-space:nowrap;width:45%}
+            .desc{color:#a9a9b2}
+          </style></head><body>
+          <h1>Formula Reference</h1>
+          #{rows}
+          </body></html>
+        HTML
       end
 
       # ------------------------------------------------------------------

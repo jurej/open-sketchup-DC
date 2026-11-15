@@ -40,11 +40,11 @@ Requires **SketchUp 2024+** (Windows/Mac).
   - **Options** tab: user-facing parameters (like Component Options).
   - **Advanced** tab: every attribute incl. formulas & meta (`fx` expands
     an editor; `*` marks instance overrides). The formula editor mixes
-    free text with inline pills: attributes and `scope!` refs render as
-    non-editable chips while you type ordinary text around them. A
-    click-to-insert palette (attributes, `global!` refs, function
-    templates, `SET`/`REDRAW`/`ALERT`/`GOTOSCENE` on `onclick`) and
-    caret-aware autocomplete insert pills without typing names; live
+    free text with inline pills: attributes, `scope!` refs, functions and
+    keywords render as non-editable chips while you type ordinary text
+    around them. Caret-aware autocomplete offers attributes, `global!`
+    refs and every real function (actions too, on `onclick`); the `ƒ(x)`
+    button opens a separate syntax/function reference window; and live
     validation through the real parser flags typos with did-you-mean
     suggestions and blocks them from being saved.
   - Select multiple DCs → a **Batch edit** section appears with the shared

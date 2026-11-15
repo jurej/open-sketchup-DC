@@ -212,28 +212,18 @@ button.small { padding: 1px 7px; font-size: 12px; }
 .fxkind.glob { background: #2c5240; color: var(--accent2); }
 .fxkind.fn   { background: #5a4a80; color: #b9a5f0; }
 .fxkind.act  { background: #7a4a3a; color: var(--warn); }
-.fxpalette {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 6px;
-  max-height: 110px;
-  overflow-y: auto;
-}
-.fxgroup { font-size: 10px; color: var(--dim); align-self: center; margin-right: 2px; }
-.fxchip {
-  font-size: 11px;
+.fxdocs {
+  font-size: 10px;
   font-family: ui-monospace, Consolas, monospace;
-  padding: 1px 7px;
-  border-radius: 10px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--bg3);
+  color: var(--accent);
+  vertical-align: middle;
 }
-.fxchip.attr { border-color: #3a5a80; color: var(--accent); }
-.fxchip.glob { border-color: #2c5240; color: var(--accent2); }
-.fxchip.fn   { border-color: #5a4a80; color: #b9a5f0; }
-.fxchip.act  { border-color: #7a4a3a; color: var(--warn); }
-.fxchip:hover { background: var(--border); }
+.fxdocs:hover { border-color: var(--accent); }
 .fxstatus { margin-top: 4px; font-size: 11px; }
 .fxstatus .bad  { color: var(--error); }
 .fxstatus .hint { color: var(--warn); }
