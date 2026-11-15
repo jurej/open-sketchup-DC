@@ -148,6 +148,20 @@ button.small { padding: 1px 7px; font-size: 12px; }
 .pedit .full { grid-column: 1 / -1; }
 .pedit .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
+/* ---------- units ---------- */
+.uwrap { position: relative; display: block; }
+.uwrap input { padding-right: 26px; }
+.pun {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--dim);
+  pointer-events: none;
+}
+.ro .pun { position: static; transform: none; margin-left: 3px; }
+
 /* ---------- formula builder ---------- */
 .fxedit { position: relative; margin-top: 2px; }
 .pedit .fxed {

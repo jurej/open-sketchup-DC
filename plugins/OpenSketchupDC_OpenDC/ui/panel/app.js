@@ -9,6 +9,30 @@ window.OpenDC = (function () {
   var fxValid = {};   // entityId::name -> last validation ok flag (true/false/undefined)
   var fxReqSeq = 0;
 
+  // Classic DC _<name>_units vocabulary + display suffixes.
+  var DC_UNITS = ["INCHES", "CENTIMETERS", "MILLIMETERS", "METERS", "FEET",
+                  "DEGREES", "RADIANS", "DECIMAL", "FLOAT", "INTEGER",
+                  "PERCENT", "BOOLEAN", "STRING", "TEXT",
+                  "DOLLARS", "EUROS", "YEN"];
+  var UNIT_SUFFIX = {
+    INCHES: '"', CENTIMETERS: "cm", MILLIMETERS: "mm", METERS: "m",
+    FEET: "'", DEGREES: "°", RADIANS: "rad", PERCENT: "%"
+  };
+
+  function unitSuffix(p) {
+    return UNIT_SUFFIX[(p.units || "").toUpperCase()] || "";
+  }
+
+  function unitSelect(field, cur) {
+    var opts = DC_UNITS.slice();
+    if (cur && opts.indexOf(cur) === -1) opts.push(cur);
+    return '<select data-f="' + field + '">' +
+      '<option value="">(none)</option>' +
+      opts.map(function (u) {
+        return '<option' + (u === cur ? " selected" : "") + ">" + u + "</option>";
+      }).join("") + "</select>";
+  }
+
   function send(action, payload) {
     sketchup.dc(JSON.stringify({ action: action, payload: payload || {} }));
   }
@@ -71,7 +95,8 @@ window.OpenDC = (function () {
     var rows = b.shared.filter(function (p) { return match(p, q); }).map(function (p) {
       return '<div class="prow">' +
         '<span class="pname" title="' + esc(p.name) + '"><b>' + esc(p.displayName) + '</b></span>' +
-        '<span>' + inputFor(p, "batch") + '</span>' +
+        '<span>' + inputFor(p, "batch",
+          unitSuffix(p) ? ' <span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span>' +
         '<span class="formula-hint">' + (p.formula ? "fx" : "") + '</span>' +
         '</div>';
     }).join("");
@@ -129,14 +154,16 @@ window.OpenDC = (function () {
     var err = p.error ? '<div class="err">' + esc(p.error) + '</div>' : "";
     var key = id + "::" + p.name;
     var editOpen = openEdit[key] && advanced;
+    var suf = unitSuffix(p);
+    var pun = suf ? ' <span class="pun">' + esc(suf) + '</span>' : "";
     var html = '<div class="prow' + (p.internal ? " internal" : "") + '">' +
       '<span class="pname" title="' + esc(p.name) + '"><b>' + esc(p.displayName) + '</b>' +
       (p.internal ? ' <span class="formula-hint">sys</span>' : '') +
       (p.overridden ? ' <span class="formula-hint">*</span>' : '') +
       '</span>' +
       '<span>' + (p.access === "VIEW" || p.internal
-        ? '<span class="ro">' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '</span>'
-        : inputFor(p, e.entityId)) + '</span>' +
+        ? '<span class="ro">' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + pun + '</span>'
+        : inputFor(p, e.entityId, pun)) + '</span>' +
       '<span>' +
       (advanced && !p.internal
         ? '<button class="small" data-edit="' + esc(key) + '" data-name="' + esc(p.name) + '">fx</button>'
@@ -161,13 +188,15 @@ window.OpenDC = (function () {
       '<div class="fxlist hidden"></div></div>' +
       '<div class="fxstatus"></div></div>' +
       '<div><label>default' + (p.formula ? " (formula-driven)" : "") + '</label>' +
-      '<input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
-      (p.formula ? " disabled" : "") + '></div>' +
+      '<span class="uwrap"><input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
+      (p.formula ? " disabled" : "") + '>' +
+      (unitSuffix(p) ? '<span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span></div>' +
       '<div><label>access</label><select data-f="access">' +
       ["NONE", "VIEW", "TEXTBOX", "LIST"].map(function (a) {
         return '<option' + (p.access === a ? " selected" : "") + '>' + a + '</option>';
       }).join("") + '</select></div>' +
-      '<div><label>units</label><input data-f="units" value="' + esc(p.units || "") + '"></div>' +
+      '<div><label>units</label>' + unitSelect("units", p.units || "") + '</div>' +
+      '<div><label>formula units</label>' + unitSelect("formulaunits", p.formulaunits || "") + '</div>' +
       '<div class="full"><label>options (Label=value&amp;…)</label><input data-f="options" value="' + esc(p.options || "") + '"></div>' +
       '<div><label>formlabel</label><input data-f="formlabel" value="' + esc(p.formlabel || "") + '"></div>' +
       '<div><label>label</label><input data-f="label" value="' + esc(p.label || "") + '"></div>' +
@@ -178,7 +207,7 @@ window.OpenDC = (function () {
       '</div>';
   }
 
-  function inputFor(p, entityId) {
+  function inputFor(p, entityId, pun) {
     var ids = "";
     var name = esc(p.name);
     if (entityId === "batch") {
@@ -197,7 +226,9 @@ window.OpenDC = (function () {
           return '<option value="' + esc(o.value) + '"' + sel + '>' + esc(o.label) + '</option>';
         }).join("") + '</select>';
     }
-    return '<input type="text" value="' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '"' + data + ph + '>';
+    return '<span class="uwrap"><input type="text" value="' +
+      esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '"' + data + ph + '>' +
+      (pun || "") + '</span>';
   }
 
   function addFormHtml(e) {
