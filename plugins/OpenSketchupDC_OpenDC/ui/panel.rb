@@ -876,6 +876,7 @@ module OpenSketchupDC
             "actions" => Expression::Evaluator::ACTIONS,
             "fnArity" => AstGraph::FN_ARITY,
             "fnVararg" => AstGraph::FN_VARARG,
+            "fnGroups" => AstGraph::FN_GROUPS,
             "isAction" => p["name"].to_s.casecmp("onclick").zero?
           }
           open_nodes_dialog

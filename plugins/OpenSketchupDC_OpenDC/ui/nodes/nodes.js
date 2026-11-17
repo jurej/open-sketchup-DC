@@ -476,20 +476,49 @@
     var ops = BIN_OPS.map(function (op) { return addItem("bin", op); });
     ops.push({ content: "unary -", callback: addItem("un", "-").callback },
              { content: "NOT", callback: addItem("un", "NOT").callback });
+    // Attribute lists get long, so split by origin: the component's own
+    // attrs, SketchUp builtins (x/y/z/rot...), model globals (scope refs).
+    var attrSubs = [];
+    if ((state.attrs || []).length) {
+      attrSubs.push(sub("Custom",
+        state.attrs.map(function (a) { return addItem("attr", a); })));
+    }
+    if ((state.builtins || []).length) {
+      attrSubs.push(sub("SketchUp",
+        state.builtins.map(function (a) { return addItem("attr", a); })));
+    }
+    if ((state.globals || []).length) {
+      attrSubs.push(sub("Globals", state.globals.map(function (g) {
+        return addItem("ref", "global!" + g);
+      })));
+    }
+    // Functions grouped by category (fnGroups from AstGraph::FN_GROUPS);
+    // anything not listed lands in "Other".
+    var fns = state.functions || [];
+    var grouped = {};
+    var fnSubs = (state.fnGroups || []).map(function (pair) {
+      var names = fns.filter(function (f) {
+        if (pair[1].indexOf(f) < 0) return false;
+        grouped[f] = true;
+        return true;
+      });
+      return names.length
+        ? sub(pair[0], names.map(function (f) { return addItem("call", f); }))
+        : null;
+    }).filter(Boolean);
+    var rest = fns.filter(function (f) { return !grouped[f]; });
+    if (rest.length) {
+      fnSubs.push(sub("Other",
+        rest.map(function (f) { return addItem("call", f); })));
+    }
     var items = [
       sub("Operators", ops),
       sub("Literals", [
         { content: "Number", callback: addItem("const", "0", { k: "num" }).callback },
         { content: "Text", callback: addItem("const", "", { k: "str" }).callback }
       ]),
-      sub("Attributes",
-        (state.attrs || []).concat(state.builtins || [])
-          .map(function (a) { return addItem("attr", a); })
-          .concat((state.globals || []).map(function (g) {
-            return addItem("ref", "global!" + g);
-          }))),
-      sub("Functions",
-        (state.functions || []).map(function (f) { return addItem("call", f); }))
+      sub("Attributes", attrSubs),
+      sub("Functions", fnSubs)
     ];
     if (state.isAction) {
       items.push(sub("Actions",

@@ -61,6 +61,23 @@ module OpenSketchupDC
       FN_VARARG = %w[CHOOSE MIN MAX ROUND LARGEST SMALLEST NEAREST
                      AND OR CONCATENATE].freeze
 
+      # Function catalog grouped for the editor palette - same sections as
+      # the Formula Reference dialog (FX_REFERENCE in ui/panel.rb).
+      FN_GROUPS = [
+        ["Logical", %w[IF AND OR NOT TRUE FALSE]],
+        ["Math", %w[MIN MAX ROUND INT FLOOR CEILING ABS SQRT EXP LN LOG10
+                    SIGN EVEN ODD ISEVEN ISODD RAND RANDBETWEEN
+                    PI DEGREES RADIANS]],
+        ["Trigonometry", %w[SIN COS TAN ASIN ACOS ATAN SINH COSH TANH
+                            ASINH ACOSH ATANH]],
+        ["Text", %w[CHAR CODE CONCATENATE DOLLAR EXACT FIND LEFT LEN LOWER
+                    MID PROPER REPLACE REPT RIGHT SUBSTITUTE TRIM UPPER
+                    VALUE]],
+        ["SketchUp", %w[CHOOSE CURRENT LARGEST SMALLEST NEAREST
+                        OPTIONINDEX OPTIONVALUE OPTIONLABEL
+                        EDGES FACES FACEAREA LAT LNG SUNANGLE SUNELEVATION]]
+      ].freeze
+
       # ------------------------------------------------------------------
       # formula string / AST -> graph document
       # ------------------------------------------------------------------

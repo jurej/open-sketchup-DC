@@ -159,6 +159,12 @@
     actions: ["SET", "ANIMATE"],
     fnArity: { IF: 3, ROUND: 1, MIN: 1, MAX: 1, PI: 0, CHOOSE: 2 },
     fnVararg: ["MIN", "MAX", "ROUND", "CHOOSE", "AND", "OR"],
+    fnGroups: [
+      ["Logical", ["IF", "AND", "OR", "NOT", "TRUE", "FALSE"]],
+      ["Math", ["MIN", "MAX", "ROUND", "INT", "PI"]],
+      ["Text", ["CONCATENATE", "LEFT", "LEN", "UPPER"]],
+      ["SketchUp", ["CHOOSE", "CURRENT", "OPTIONINDEX"]]
+    ],
     isAction: false
   });
   </script>
