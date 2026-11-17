@@ -1046,6 +1046,7 @@ module OpenSketchupDC
       end
 
       def push_state
+        refresh_graph_window
         return if @dialog.nil?
 
         push_theme(@dialog)
@@ -1054,6 +1055,37 @@ module OpenSketchupDC
         Observers.watch_current(Sketchup.active_model)
       rescue StandardError => e
         puts "#{PLUGIN_NAME}: push_state failed - #{e.message}"
+      end
+
+      # Keeps the floating graph window live on selection/entity changes:
+      # re-push fresh data for the tracked entity while it stays selected,
+      # retarget to the first selected dynamic target otherwise. With no
+      # dynamic selection the window falls back to an empty view only when
+      # its entity is gone for good.
+      def refresh_graph_window
+        return if @graph_dialog.nil?
+
+        cur = entity(@graph_eid.to_s)
+        dyn = Selection.dynamic_targets(Sketchup.active_model)
+        target = dyn.include?(cur) ? cur : dyn.first
+        if target.nil?
+          return if valid_entity?(cur)
+
+          @graph_pending = { "label" => "", "entityId" => nil,
+                             "graph" => { "nodes" => [], "edges" => [] } }
+          return push_graph
+        end
+
+        eid = register(target)
+        @graph_eid = eid
+        @graph_pending = {
+          "label" => entity_label(target),
+          "entityId" => eid,
+          "graph" => entity_graph(read_graph_set(target, eid))
+        }
+        push_graph
+      rescue StandardError => e
+        puts "#{PLUGIN_NAME}: graph refresh failed - #{e.message}"
       end
 
       def push_error(msg)

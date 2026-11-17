@@ -18,12 +18,27 @@
 
   var lg = window.litegraph && window.litegraph.js;
   if (!lg) { document.getElementById("gmsg").textContent = "litegraph failed to load"; }
+
+  // litegraph's bg pipeline is self-inconsistent on hidpi screens: the
+  // front canvas draws nodes in unscaled graph coords (device px), while
+  // drawBackCanvas applies a devicePixelRatio transform and the bg blit
+  // divides by dpr - compressing grid/links into 1/dpr of the window.
+  // Forcing dpr=1 makes resize, transforms, and hit-testing uniformly
+  // CSS-pixel based; slightly softer text, but everything lands right.
+  if (window.devicePixelRatio !== 1) {
+    try {
+      Object.defineProperty(window, "devicePixelRatio",
+        { value: 1, configurable: true });
+    } catch (e) { /* older CEF - rendering stays correct at any rate */ }
+  }
+
   var LiteGraph = lg.LiteGraph, LGraphNode = lg.LGraphNode,
       SubgraphNode = lg.SubgraphNode;
 
   var canvas = null;      // LGraphCanvas
   var rootGraph = null;   // top-level LGraph
   var cur = null;         // latest payload {label, entityId, graph}
+  var lastEntityId = null;// entity of the last rendered graph
   var building = false;   // suppress edit ops while rebuilding the canvas
   var savedView = null;   // pan/zoom kept across re-renders
   var toastTimer = null;
@@ -242,6 +257,9 @@
       this._odc = {};
     }
     getMenuOptions() { return odcMenu(this); }
+    // litegraph shows Remove/Rename Slot on slot right-click - those are
+    // meaningless on data-owned nodes, so surface the node menu instead.
+    getSlotMenuOptions() { return odcMenu(this); }
   }
 
   class ODCSubNode extends SubgraphNode {
@@ -257,6 +275,7 @@
         function (b) { return b.name !== "enter_subgraph"; });
     }
     getMenuOptions() { return odcMenu(this); }
+    getSlotMenuOptions() { return odcMenu(this); }
   }
 
   function odcMenu(n) {
@@ -366,6 +385,17 @@
     if (rn && sub.outputs[0]) {
       sub.outputs[0].connect(rn.outputs[0], rn);
     }
+    // The IO docks both default to x=0 and overlap; park the output dock
+    // to the right of the inner layout. arrange() (auto-run while dirty)
+    // sizes them to their slots.
+    var maxX = 160;
+    Object.keys(idMap).forEach(function (id) {
+      maxX = Math.max(maxX, idMap[id].pos[0] + idMap[id].size[0]);
+    });
+    sub.inputNode.pos = [0, 60];
+    sub.outputNode.pos = [maxX + 180, 60];
+    sub.inputNode.arrange();
+    sub.outputNode.arrange();
     // View-only inside a formula: user-drawn links don't persist.
     sub.events.addEventListener("link-created", function (ev) {
       if (building) return;
@@ -543,6 +573,18 @@
     canvas.allow_searchbox = false;
     canvas.render_connection_arrows = true;
     canvas.getCanvasMenuOptions = function () {
+      if (canvas.subgraph) {
+        return [
+          { content: "Back to dependencies",
+            callback: function () {
+              canvas.subgraph = null;
+              canvas.setGraph(rootGraph);
+              updateCrumbs();
+            } },
+          { content: "(formula graph is view-only - edit via fx)",
+            disabled: true }
+        ];
+      }
       return [{ content: "New attribute",
         callback: function () { openNewAttr(); } }];
     };
@@ -559,6 +601,7 @@
     };
     el.addEventListener("subgraph-opened", updateCrumbs);
     window.addEventListener("resize", function () { canvas.resize(); });
+    // resize() reads the parent box in CSS px - correct once dpr is 1.
     requestAnimationFrame(function () { canvas.resize(); });
   }
 
@@ -585,12 +628,15 @@
     canvas.setGraph(rootGraph);
     building = false;
 
-    if (savedView && !empty) {
+    // Keep pan/zoom across re-renders of the same entity; a retargeted
+    // window (selection changed) starts at the default framing instead.
+    if (savedView && !empty && data.entityId === lastEntityId) {
       canvas.ds.scale = savedView.scale;
       canvas.ds.offset[0] = savedView.offset[0];
       canvas.ds.offset[1] = savedView.offset[1];
       canvas.setDirty(true, true);
     }
+    lastEntityId = data.entityId;
     updateCrumbs();
   };
 
