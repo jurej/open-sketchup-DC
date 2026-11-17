@@ -7,6 +7,7 @@
   <meta charset="utf-8">
   <title>Open DC - Dependency Graph</title>
   <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../vendor/litegraph.css">
   <style>
     :root {
       color-scheme: dark;
@@ -37,6 +38,14 @@
       background: var(--bg); z-index: 10; position: relative;
     }
     #gtitle { font-weight: 600; color: var(--accent); white-space: nowrap; }
+    #gback {
+      display: none; background: var(--bg3); color: var(--accent);
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 10px; cursor: pointer; font-size: 11px;
+    }
+    #gback:hover { border-color: var(--accent); }
+    #gcrumb { color: var(--dim); font-size: 11px;
+      font-family: ui-monospace, Consolas, monospace; }
     .hint { font-size: 10px; color: var(--muted); }
     #gadd {
       margin-left: auto; background: var(--bg3); color: var(--accent);
@@ -44,109 +53,20 @@
       padding: 3px 11px; cursor: pointer; font-size: 11px;
     }
     #gadd:hover { background: var(--bg2); }
-    #rete { position: absolute; inset: 38px 0 0 0; }
+    #lgwrap { position: absolute; inset: 38px 0 0 0; }
+    #lgcanvas { width: 100%; height: 100%; display: block; outline: none; }
     #gmsg {
       position: absolute; top: 60px; left: 0; right: 0;
       text-align: center; color: var(--muted); display: none;
       z-index: 5; pointer-events: none;
     }
 
-    /* ---- node theme (same canvas family as the formula editor) ---- */
-    .node {
-      position: relative; background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 6px; min-width: 110px;
-      box-shadow: 0 2px 8px var(--node-shadow);
-      font-family: ui-monospace, Consolas, monospace;
+    /* litegraph menus drawn in-page - theme via its CSS vars where
+       possible, keep the dialog chrome ours */
+    .litegraph .context-menu, .litegraph .litecontextmenu {
+      background: var(--bg3) !important; color: var(--fg) !important;
+      border: 1px solid var(--border) !important;
     }
-    .node.selected { border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px var(--node-shadow); }
-    .node.cyc { border-color: var(--error);
-      background: rgba(230, 100, 100, .10); }
-    .ntitle {
-      display: flex; align-items: baseline; gap: 8px;
-      padding: 3px 7px; border-bottom: 1px solid var(--border);
-      border-radius: 6px 6px 0 0; background: rgba(79,156,249,.07);
-    }
-    .nkind { font-size: 8.5px; letter-spacing: .06em;
-      text-transform: uppercase; color: var(--muted); }
-    .nname {
-      flex: 1; font-size: 11px; font-weight: 600; color: var(--fg);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .node.cyc .nname { color: var(--error); }
-    .node.ext  .nname { color: var(--accent2); }
-    .node.virt .nname { color: var(--accent); }
-    .node.ext  .ntitle { background: rgba(127,208,162,.07);
-      border-bottom-style: dashed; }
-    .node.virt .ntitle { background: rgba(79,156,249,.10);
-      border-bottom-style: dashed; }
-    .fxbtn {
-      background: none; border: 1px solid var(--border); color: var(--muted);
-      border-radius: 4px; font-size: 9px; padding: 0 6px; cursor: pointer;
-      font-family: inherit; line-height: 14px;
-    }
-    .fxbtn:hover { color: var(--accent); border-color: var(--accent); }
-    .nbody { display: flex; padding: 2px 0; min-height: 18px; }
-    .col { display: flex; flex-direction: column; }
-    .col.ins  { align-items: flex-start; }
-    .col.ctrls { flex: 1; align-items: center; justify-content: center;
-      min-width: 0; overflow: hidden; }
-    .col.outs { align-items: flex-end; margin-left: auto; }
-    .port { display: flex; align-items: center; gap: 4px; }
-    .ptitle { font-size: 9px; color: var(--muted); padding-right: 2px; }
-    .sock {
-      width: 11px; height: 11px; border-radius: 6px; margin: 2px;
-      background: var(--bg); border: 2px solid var(--muted); cursor: pointer;
-    }
-    .sock:hover, .sock.used { border-color: var(--accent2);
-      background: var(--accent2); }
-    .fxline {
-      max-width: 150px; overflow: hidden; text-overflow: ellipsis;
-      white-space: nowrap; font-size: 9.5px; color: var(--dim);
-      padding: 0 8px;
-    }
-    #rete .connection path { stroke: var(--muted); stroke-width: 1.5;
-      fill: none; }
-    #rete .connection .main-path { stroke: var(--muted); stroke-width: 1.5; }
-    #rete .lit .main-path { stroke: var(--accent); stroke-width: 2;
-      opacity: 1; }
-    #rete .sel .main-path { stroke: var(--accent2); stroke-width: 2.2;
-      opacity: 1; }
-
-    /* plugin injects scoped [data-v] styles (blue theme) - #rete out-specifies */
-    #rete .context-menu {
-      background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
-      margin: 0; box-shadow: 0 8px 20px var(--menu-shadow); z-index: 30;
-      font-family: ui-monospace, Consolas, monospace;
-      overflow: visible;
-    }
-    #rete .context-menu .item {
-      color: var(--fg); background: transparent; border: 0;
-      padding: 3px 12px; font-size: 10px; cursor: pointer;
-      font-family: inherit; width: auto; position: relative;
-    }
-    #rete .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
-    #rete .context-menu .search {
-      color: var(--fg); background: transparent; border: 0;
-      border-bottom: 1px solid var(--border); padding: 4px; width: auto;
-    }
-    #rete .context-menu .search input {
-      background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 3px 7px;
-      width: 100%; box-sizing: border-box;
-      font: 10px ui-monospace, Consolas, monospace; outline: none;
-    }
-    #rete .context-menu .search input:focus { border-color: var(--accent); }
-    #rete .context-menu .subitems {
-      background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 7px; box-shadow: 0 8px 20px var(--menu-shadow);
-      padding: 3px 0; min-width: 150px;
-      max-height: min(340px, calc(100vh - 80px));
-      overflow-y: auto; overflow-x: hidden;
-    }
-    #rete .context-menu .item .subitems { display: none !important; }
-    #rete .context-menu .item:hover > .subitems { display: block !important; }
 
     #gtoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -184,13 +104,15 @@
 </head>
 <body>
   <header>
+    <button id="gback" title="Back to the dependency graph">&larr; back</button>
     <span id="gtitle">Dependency Graph</span>
-    <span class="hint">drag socket &rarr; deps to wire &middot; click edge + Del
-      to unlink &middot; double-click / <b>fx</b> opens the formula canvas
-      &middot; right-click to add</span>
+    <span id="gcrumb"></span>
+    <span class="hint">drag output &rarr; input to wire &middot; click link for
+      options &middot; double-click a formula node to dive in &middot;
+      right-click for actions</span>
     <button id="gadd" title="Add a new attribute">+ attr</button>
   </header>
-  <div id="rete"></div>
+  <div id="lgwrap"><canvas id="lgcanvas" tabindex="1"></canvas></div>
   <div id="gmsg">No parameter dependencies.</div>
   <div id="gtoast"></div>
   <div id="gconfirm"><div class="gdialog">
@@ -209,28 +131,7 @@
       <button id="gnok" class="primary" title="Create the attribute">Add</button>
     </div>
   </div></div>
-  <script src="../vendor/vue.min.js"></script>
-  <script src="../vendor/rete.min.js"></script>
-  <script src="../vendor/connection-plugin.min.js"></script>
-  <script src="../vendor/vue-render-plugin.min.js"></script>
-  <script>
-    // Minimal lodash stub — context-menu-plugin UMD expects window._
-    // and only uses debounce()/isFunction().
-    window._ = window._ || {
-      debounce: function (fn, wait) {
-        var t = null;
-        function d() {
-          var self = this, args = arguments;
-          if (t) clearTimeout(t);
-          t = setTimeout(function () { t = null; fn.apply(self, args); }, wait);
-        }
-        d.cancel = function () { if (t) { clearTimeout(t); t = null; } };
-        return d;
-      },
-      isFunction: function (v) { return typeof v === 'function'; }
-    };
-  </script>
-  <script src="../vendor/context-menu-plugin.min.js"></script>
+  <script src="../vendor/litegraph.umd.js"></script>
   <script src="graph.js"></script>
 </body>
 </html>

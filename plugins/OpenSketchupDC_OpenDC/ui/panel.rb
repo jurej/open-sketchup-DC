@@ -1166,7 +1166,8 @@ module OpenSketchupDC
 
         nodes = names.select { |n| used[n] }.map do |n|
           { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n),
-            "formula" => ps[n]&.formula, "hasFormula" => !(ps[n]&.formula.to_s.empty?) }
+            "formula" => ps[n]&.formula, "hasFormula" => !(ps[n]&.formula.to_s.empty?),
+            "doc" => param_doc(ps[n]) }
         end
         virtual = (used.keys - names).map { |n| { "id" => n, "virtual" => true } }
         extnodes = extdeps.values.flatten.uniq.map { |id| { "id" => id, "external" => true } }
@@ -1180,6 +1181,16 @@ module OpenSketchupDC
           ids.uniq.each { |id| edges << { "from" => id, "to" => n, "literal" => "0" } }
         end
         { "nodes" => nodes | extnodes | virtual, "edges" => edges.uniq }
+      end
+
+      # AstGraph doc for a param's formula, so the graph window can render
+      # the formula as a drill-down subgraph. nil when unparseable/missing.
+      def param_doc(p)
+        return nil if p.nil? || p.formula.to_s.empty?
+
+        AstGraph.to_graph(p.formula)
+      rescue StandardError
+        nil
       end
 
       # Value literal used when an edge is unlinked: the dep's current value

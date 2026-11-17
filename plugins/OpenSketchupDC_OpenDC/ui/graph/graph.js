@@ -1,25 +1,31 @@
 // Open DC - modern Dynamic Components for SketchUp
 // Copyright (C) 2026 Jure Judež and contributors
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-// Dependency graph on the same Rete.js canvas as the formula node editor.
-// Each attribute is a node: the "deps" input collects the attributes its
-// formula references, the "out" socket feeds its dependents.
+//
+// Dependency graph on litegraph (ComfyOrg fork, vendored UMD).
+// Top level: one node per attribute; attributes with a formula carry a
+// litegraph Subgraph holding the formula's AST - double-click or the
+// title button dives in, the header back button returns. Edges point
+// dep -> dependent (data flow) and land on the subgraph's named input
+// slot for the attribute they feed.
 //   - drag out -> deps:  writes formula(target) = source (with confirm)
-//   - click edge + Del:  unlinks - refs in the formula become literals
-//   - double-click / fx: opens that attribute's formula canvas
-// Ruby pushes {label, entityId, graph:{nodes,edges}} via renderGraph.
+//   - click link -> Unlink: refs in the formula become literals
+//   - double-click / context menu: dive into the formula subgraph
+// Ruby pushes {label, entityId, graph:{nodes,edges}} via renderGraph;
+// each node may carry "doc" (AstGraph doc) for its subgraph.
 (function () {
   "use strict";
 
-  var socketVal = new Rete.Socket("val", "Value");
-  socketVal.combineWith(socketVal.name);
+  var lg = window.litegraph && window.litegraph.js;
+  if (!lg) { document.getElementById("gmsg").textContent = "litegraph failed to load"; }
+  var LiteGraph = lg.LiteGraph, LGraphNode = lg.LGraphNode,
+      SubgraphNode = lg.SubgraphNode;
 
-  var editor = null;
-  var cur = null;        // latest payload {label, entityId, graph}
-  var selConn = null;    // selected edge (Rete connection)
-  var building = false;  // suppress edit ops while rebuilding the canvas
-  var savedView = null;  // pan/zoom kept across re-renders
+  var canvas = null;      // LGraphCanvas
+  var rootGraph = null;   // top-level LGraph
+  var cur = null;         // latest payload {label, entityId, graph}
+  var building = false;   // suppress edit ops while rebuilding the canvas
+  var savedView = null;   // pan/zoom kept across re-renders
   var toastTimer = null;
   var confirmCb = null;
 
@@ -32,7 +38,8 @@
   }
 
   function send(payload) {
-    sketchup.gact(JSON.stringify(payload));
+    if (window.sketchup && sketchup.gact) sketchup.gact(JSON.stringify(payload));
+    else console.log("GACT", payload);
   }
 
   function applyFormula(name, formula) {
@@ -133,9 +140,6 @@
   }
 
   // ---- add attribute -------------------------------------------------
-  // The "+ attr" button and the canvas context menu both open the name
-  // dialog; Ruby creates the attribute and re-pushes the graph, so the
-  // new param lands in the leftmost column as a fresh wire target.
   function openNewAttr() {
     document.getElementById("gnewname").value = "";
     document.getElementById("gnew").classList.add("show");
@@ -170,7 +174,7 @@
   document.getElementById("gnok").addEventListener("click", submitNewAttr);
   document.getElementById("gncancel").addEventListener("click", hideNewAttr);
   document.getElementById("gnewname").addEventListener("keydown", function (ev) {
-    ev.stopPropagation(); // keep Del/Escape out of the canvas handlers
+    ev.stopPropagation();
     if (ev.key === "Enter") submitNewAttr();
     else if (ev.key === "Escape") hideNewAttr();
   });
@@ -192,265 +196,409 @@
     send({ op: "openNodes", entityId: cur.entityId, name: name });
   }
 
-  // ---- node template -------------------------------------------------
-  // Same family as the formula editor's ODCNode: kind tag + name title,
-  // left inputs / right outputs, and an fx button into the node editor.
-  var KIND = { param: "param", ext: "external", virt: "builtin" };
-
-  var socketDir = {
-    bind: function (el, binding, vnode) {
-      vnode.context.bindSocket(el, binding.arg, binding.value);
-    },
-    update: function (el, binding, vnode) {
-      vnode.context.bindSocket(el, binding.arg, binding.value);
-    }
-  };
-
-  var DepNode = {
-    props: ["node", "editor", "bindSocket", "bindControl"],
-    directives: { socket: socketDir },
-    template:
-      '<div class="node" :class="[selected(), node.data.t, {cyc: node.data.cyclic}]"' +
-        ' @dblclick.stop="openFx">' +
-        '<div class="ntitle">' +
-          '<span class="nkind">{{kind}}</span>' +
-          '<span class="nname" :title="node.data.v">{{node.data.v}}</span>' +
-          '<button v-if="editable" class="fxbtn" title="Open formula canvas" ' +
-            '@mousedown.stop @click.stop="openFx">fx</button>' +
-        '</div>' +
-        '<div class="nbody">' +
-          '<div class="col ins">' +
-            '<div v-for="i in inputs()" :key="i.key" class="port">' +
-              '<div v-socket:input="i" class="sock"></div>' +
-              '<div class="ptitle">{{i.key}}</div>' +
-            '</div>' +
-          '</div>' +
-          '<div class="col ctrls">' +
-            '<div v-if="fx" class="fxline" :title="fxTitle">{{fx}}</div>' +
-          '</div>' +
-          '<div class="col outs">' +
-            '<div v-for="o in outputs()" :key="o.key" class="port out">' +
-              '<div v-socket:output="o" class="sock"></div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>',
-    computed: {
-      kind: function () { return KIND[this.node.data.t] || "param"; },
-      editable: function () { return this.node.data.t === "param"; },
-      fx: function () {
-        var f = String(this.node.data.formula || "");
-        return f ? "=" + (f.length > 22 ? f.slice(0, 22) + "…" : f) : "";
-      },
-      fxTitle: function () { return String(this.node.data.formula || ""); }
-    },
-    methods: {
-      inputs: function () { return Array.from(this.node.inputs.values()); },
-      outputs: function () { return Array.from(this.node.outputs.values()); },
-      selected: function () {
-        return this.editor.selected.contains(this.node) ? "selected" : "";
-      },
-      openFx: function () { openFx(this.node.data.v); }
-    }
-  };
-
-  // ---- components ----------------------------------------------------
-  function comp(name, build) {
-    var c = new Rete.Component(name);
-    c.builder = function (node) { build(node); return node; };
-    c.worker = function () {};
-    return c;
+  // ---- theme ----------------------------------------------------------
+  function cssVar(n) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(n).trim();
   }
 
-  // deps is multi-connection: a formula may reference several attributes.
-  var components = [
-    comp("param", function (n) {
-      n.addInput(new Rete.Input("deps", "deps", socketVal, true));
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("ext", function (n) {
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("virt", function (n) {
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    })
-  ];
+  function applyTheme() {
+    LiteGraph.NODE_FONT = "Segoe UI, sans-serif";
+    LiteGraph.DEFAULT_FONT = "Segoe UI, sans-serif";
+    LiteGraph.NODE_TEXT_SIZE = 13;
+    LiteGraph.NODE_WIDTH = 160;
+    LiteGraph.NODE_TITLE_HEIGHT = 26;
+    LiteGraph.NODE_SLOT_HEIGHT = 18;
+    LiteGraph.NODE_TITLE_COLOR = cssVar("--dim");
+    LiteGraph.NODE_SELECTED_TITLE_COLOR = cssVar("--fg");
+    LiteGraph.NODE_TEXT_COLOR = cssVar("--fg");
+    LiteGraph.NODE_TEXT_HIGHLIGHT_COLOR = cssVar("--fg");
+    LiteGraph.NODE_DEFAULT_BGCOLOR = cssVar("--bg3");
+    LiteGraph.NODE_DEFAULT_COLOR = cssVar("--bg2");
+    LiteGraph.NODE_DEFAULT_BOXCOLOR = cssVar("--border");
+    LiteGraph.LINK_COLOR = cssVar("--muted");
+    LiteGraph.CONNECTING_LINK_COLOR = cssVar("--accent2");
+    LiteGraph.WIDGET_BGCOLOR = cssVar("--bg2");
+    LiteGraph.WIDGET_OUTLINE_COLOR = cssVar("--border");
+    LiteGraph.WIDGET_TEXT_COLOR = cssVar("--fg");
+    LiteGraph.WIDGET_SECONDARY_TEXT_COLOR = cssVar("--dim");
+    LiteGraph.WIDGET_DISABLED_TEXT_COLOR = cssVar("--muted");
+    if (canvas) canvas.clear_background_color = cssVar("--bg");
+  }
 
-  function typeOf(d) { return d.external ? "ext" : d.virtual ? "virt" : "param"; }
+  // Kind accent as a thin box color - a filled title bar swallows labels.
+  function tint(node, varName) {
+    node.boxcolor = cssVar(varName);
+  }
 
-  // node.name doubles as the CSS class in vue-render, so it carries the
-  // node TYPE; the attribute name lives in data.v.
-  async function makeNode(d) {
-    var t = typeOf(d);
-    var node = await components.find(function (c) { return c.name === t; })
-      .createNode({
-        v: d.id,
-        formula: d.formula || "",
-        cyclic: !!d.cyclic
+  // ---- node classes ---------------------------------------------------
+  // All nodes are data-owned: no delete/clone through the canvas.
+  class ODCNode extends LGraphNode {
+    constructor(title) {
+      super(title || "node");
+      this.removable = false;
+      this.clonable = false;
+      this.block_delete = true;
+      this._odc = {};
+    }
+    getMenuOptions() { return odcMenu(this); }
+  }
+
+  class ODCSubNode extends SubgraphNode {
+    constructor(graph, subgraph, instanceData) {
+      super(graph, subgraph, instanceData);
+      this.removable = false;
+      this.clonable = false;
+      this.block_delete = true;
+      this._odc = {};
+      // stock "enter_subgraph" title button uses an icon-font glyph we
+      // don't ship - it renders as tofu. Double-click/menu do the same.
+      this.title_buttons = (this.title_buttons || []).filter(
+        function (b) { return b.name !== "enter_subgraph"; });
+    }
+    getMenuOptions() { return odcMenu(this); }
+  }
+
+  function odcMenu(n) {
+    var o = n._odc || {};
+    if (o.kind === "sub") return [
+      { content: "Open formula graph",
+        callback: function () { canvas.openSubgraph(n.subgraph); } },
+      { content: "Edit formula (fx)",
+        callback: function () { openFx(o.name); } }
+    ];
+    if (o.kind === "param") return [
+      { content: "Open formula canvas",
+        callback: function () { openFx(o.name); } }
+    ];
+    return [{ content: "(external / builtin)", disabled: true }];
+  }
+
+  // ---- inner (AST) nodes ----------------------------------------------
+  function makeInner(nd, argc) {
+    var n = new ODCNode();
+    n._odc = { kind: nd.t };
+    switch (nd.t) {
+      case "const":
+        n.title = nd.k === "str" ? '"' + nd.v + '"' : String(nd.v);
+        n.addOutput("out", 0);
+        tint(n, "--fn");
+        break;
+      case "un":
+        n.title = nd.v;
+        n.addInput("x", 0);
+        n.addOutput("out", 0);
+        break;
+      case "bin":
+        n.title = nd.v;
+        n.addInput("a", 0);
+        n.addInput("b", 0);
+        n.addOutput("out", 0);
+        break;
+      case "call":
+      case "act":
+        n.title = nd.v;
+        for (var i = 0; i < argc; i++) n.addInput("arg" + i, 0);
+        n.addOutput("out", 0);
+        break;
+      default:
+        n.title = nd.t;
+    }
+    return n;
+  }
+
+  // depth = longest path from a leaf; leaves left, root right.
+  function layoutDepth(nodes, links) {
+    var depth = {};
+    function depthOf(id, seen) {
+      if (depth[id] != null) return depth[id];
+      if (seen[id]) return 0;
+      seen[id] = true;
+      var ins = links.filter(function (l) { return l.t === id; });
+      return depth[id] = ins.length
+        ? 1 + Math.max.apply(null, ins.map(function (l) {
+            return depthOf(l.f, seen); }))
+        : 0;
+    }
+    Object.keys(nodes).forEach(function (id) { depthOf(id, {}); });
+    return depth;
+  }
+
+  // Inside a subgraph, attr/ref leaves don't become nodes: the subgraph's
+  // named input slots represent them (one slot per referenced name,
+  // deduped), wired straight into the consuming ports.
+  function buildSub(sub, doc) {
+    var nodes = doc.nodes || {}, links = doc.links || [];
+    var leaf = {}; // doc node id -> referenced attr name
+    Object.keys(nodes).forEach(function (id) {
+      var t = nodes[id].t;
+      if (t === "attr" || t === "ref") leaf[id] = nodes[id].v;
+    });
+    var argc = {};
+    links.forEach(function (l) { argc[l.t] = (argc[l.t] || 0) + 1; });
+    var depth = layoutDepth(nodes, links);
+    var perLvl = {}, idMap = {};
+    Object.keys(nodes).forEach(function (id) {
+      if (leaf[id]) return;
+      var n = makeInner(nodes[id], argc[id] || 0);
+      var lv = depth[id] || 0;
+      perLvl[lv] = (perLvl[lv] || 0) + 1;
+      n.pos = [160 + lv * 230, 140 + (perLvl[lv] - 1) * 110];
+      sub.add(n);
+      idMap[id] = n;
+    });
+    links.forEach(function (l) {
+      var dst = idMap[l.t];
+      if (!dst) return;
+      var inIdx = dst.inputs.findIndex(function (i) {
+        return i.name === l.p;
       });
-    node.data.t = t;
-    node.name = t;
-    return node;
+      if (inIdx < 0) return;
+      if (leaf[l.f] != null) {
+        var si = sub.inputs.find(function (x) { return x.name === leaf[l.f]; });
+        if (si) si.connect(dst.inputs[inIdx], dst);
+      } else {
+        var src = idMap[l.f];
+        if (src) src.connect(0, dst, inIdx);
+      }
+    });
+    var rn = idMap[doc.root];
+    if (rn && sub.outputs[0]) {
+      sub.outputs[0].connect(rn.outputs[0], rn);
+    }
+    // View-only inside a formula: user-drawn links don't persist.
+    sub.events.addEventListener("link-created", function (ev) {
+      if (building) return;
+      try { sub.removeLink(ev.detail.id); } catch (e) { /* gone */ }
+      toast("Formula graphs are view-only here - edit via fx", true);
+    });
   }
 
-  // ---- graph doc -> rete ---------------------------------------------
-  // Columns by dependency level (deps left, dependents right), rows in
-  // payload order - same columnar layout the old SVG renderer used.
-  async function buildEditor(graph) {
+  // ---- subgraphs --------------------------------------------------------
+  function uuid() {
+    return (crypto.randomUUID ? crypto.randomUUID()
+      : "sg-" + Math.random().toString(16).slice(2));
+  }
+
+  // Subgraph inputs = every dep-edge source into this attribute plus any
+  // attr/ref leaf names in its formula doc (deduped).
+  function subgraphInputs(d) {
+    var set = [];
+    (cur.graph.edges || []).forEach(function (e) {
+      if (e.to === d.id && set.indexOf(e.from) < 0) set.push(e.from);
+    });
+    Object.keys((d.doc && d.doc.nodes) || {}).forEach(function (id) {
+      var nd = d.doc.nodes[id];
+      if ((nd.t === "attr" || nd.t === "ref") && set.indexOf(nd.v) < 0) {
+        set.push(nd.v);
+      }
+    });
+    return set;
+  }
+
+  function makeSubgraphNode(d) {
+    var sub = rootGraph.createSubgraph({
+      id: uuid(), name: d.id,
+      inputNode: { id: -10, bounding: [0, 0, 100, 160] },
+      outputNode: { id: -20, bounding: [0, 0, 100, 160] },
+      inputs: [], outputs: [], widgets: [],
+      nodes: [], links: [], groups: [], reroutes: []
+    });
+    subgraphInputs(d).forEach(function (nm) { sub.addInput(nm, "*"); });
+    sub.addOutput("out", "*");
+    buildSub(sub, d.doc || { nodes: {}, links: [] });
+    var sn = new ODCSubNode(rootGraph, sub, { id: -1 });
+    sn._odc = { kind: "sub", name: d.id };
+    sn.title = d.id;
+    sn.setSize(sn.computeSize());
+    if (d.cyclic) sn.boxcolor = cssVar("--error");
+    return sn;
+  }
+
+  // ---- top-level graph ----------------------------------------------------
+  function makeTopNode(d) {
+    var n;
+    if (d.external) {
+      n = new ODCNode(d.id);
+      n.addOutput("out", 0);
+      n._odc = { kind: "ext", name: d.id };
+      tint(n, "--accent2");
+    } else if (d.virtual) {
+      n = new ODCNode(d.id);
+      n.addOutput("out", 0);
+      n._odc = { kind: "virt", name: d.id };
+      tint(n, "--accent");
+    } else if (d.hasFormula && d.doc) {
+      n = makeSubgraphNode(d);
+    } else {
+      n = new ODCNode(d.id);
+      n.addInput("deps", 0);
+      n.addOutput("out", 0);
+      n._odc = { kind: "param", name: d.id };
+    }
+    if (d.cyclic) n.boxcolor = cssVar("--error");
+    return n;
+  }
+
+  function inputIndexFor(node, from) {
+    if (node.isSubgraphNode && node.isSubgraphNode()) {
+      return node.inputs.findIndex(function (i) { return i.name === from; });
+    }
+    return node.inputs.length ? 0 : -1;
+  }
+
+  // Columns by dependency level (deps left, dependents right), rows
+  // stacked by estimated node height.
+  function buildTop(graph, g) {
     var cols = {};
-    (graph.nodes || []).forEach(function (n) {
+    (g.nodes || []).forEach(function (n) {
       var l = n.external || n.virtual ? 0 : (n.level || 0);
       (cols[l] = cols[l] || []).push(n);
     });
-    var lvls = Object.keys(cols).map(Number).sort(function (a, b) { return a - b; });
+    var lvls = Object.keys(cols).map(Number).sort(function (a, b) {
+      return a - b;
+    });
     var idMap = {};
-    for (var ci = 0; ci < lvls.length; ci++) {
-      var col = cols[lvls[ci]];
-      for (var ri = 0; ri < col.length; ri++) {
-        var node = await makeNode(col[ri]);
-        node.position = [50 + ci * 230, 50 + ri * 90];
-        editor.addNode(node);
-        idMap[col[ri].id] = node;
-      }
-    }
-    (graph.edges || []).forEach(function (e) {
+    lvls.forEach(function (lv, ci) {
+      var y = 50;
+      cols[lv].forEach(function (d) {
+        var node = makeTopNode(d);
+        var sz = node.computeSize();
+        node.setSize(sz);
+        node.pos = [60 + ci * 280, y];
+        graph.add(node);
+        y += sz[1] + 30;
+        idMap[d.id] = node;
+      });
+    });
+    (g.edges || []).forEach(function (e) {
       var s = idMap[e.from], d = idMap[e.to];
       if (!s || !d) return;
-      var out = s.outputs.get("out"), inp = d.inputs.get("deps");
-      if (out && inp) editor.connect(out, inp);
+      var inIdx = inputIndexFor(d, e.from);
+      if (inIdx < 0) return;
+      var link = s.connect(0, d, inIdx);
+      if (link) link.data = { from: e.from, to: e.to };
     });
   }
 
-  // Blue-highlight connections into/out of the selected node(s).
-  function markLit() {
-    var sel = editor.selected.list;
-    editor.view.connections.forEach(function (cv) {
-      var c = cv.connection;
-      var lit = sel.some(function (n) {
-        return c.input.node === n || c.output.node === n;
-      });
-      if (cv.el) cv.el.classList.toggle("lit", lit);
-    });
-  }
-
-  function wireEditorEvents() {
-    // A user-drawn connection is only an intent: the real edge set is
-    // owned by Ruby. Remove the visual connection and send the wire op;
-    // the pushed re-render shows the result.
-    editor.on("connectioncreated", function (conn) {
-      if (building) return;
-      var from = conn.output.node.data.v, to = conn.input.node.data.v;
-      building = true;
-      // defer out of the emit - mutating the connection set while the
-      // event is being dispatched leaves stale views in vue-render
-      setTimeout(function () {
-        try { editor.removeConnection(conn); } catch (e) { /* already gone */ }
-        building = false;
-        wire(from, to);
-      }, 0);
-    });
-
-    // Edge removal (Del on a selected edge, or rewiring one) unlinks the
-    // reference in the target's formula.
-    editor.on("connectionremoved", function (conn) {
-      if (building) return;
-      if (!conn.output || !conn.input || !conn.output.node || !conn.input.node) return;
-      selConn = null;
-      unlinkEdge(conn.output.node.data.v, conn.input.node.data.v);
-    });
-
-    editor.on("nodeselected", markLit);
-    editor.on("connectioncreated connectionremoved", markLit);
-  }
-
-  // Click an edge's path to select it (Del then unlinks). Delegated on
-  // the document - the #rete element itself is replaced on every render.
-  document.addEventListener("click", function (ev) {
-    if (!editor || !editor.view) return;
-    var el = ev.target.closest ? ev.target.closest(".connection") : null;
-    var hit = null;
-    editor.view.connections.forEach(function (cv) {
-      var on = !!(el && cv.el && cv.el.contains(ev.target));
-      if (cv.el && cv.el.classList) cv.el.classList.toggle("sel", on);
-      if (on) hit = cv.connection;
-    });
-    selConn = hit;
-    if (hit) {
-      toast("edge " + hit.output.node.data.v + " -> " + hit.input.node.data.v +
-            " - press Del to unlink");
+  // ---- canvas wiring ------------------------------------------------------
+  function linkMenu(segment, e) {
+    if (canvas.subgraph) {
+      new LiteGraph.ContextMenu(
+        ["(view only - edit via fx)"], { event: e });
+      return false;
     }
+    var d = (segment && segment.data) || {};
+    var items = [];
+    if (d.from) {
+      items.push({ content: "Unlink (replace refs with literal)",
+        callback: function () { unlinkEdge(d.from, d.to); } });
+      items.push(null);
+    }
+    items.push("Cancel");
+    new LiteGraph.ContextMenu(items, { event: e, callback: function () {} });
+    return false;
+  }
+
+  function wireLinkEvents() {
+    // A user-drawn link is only an intent: the real edge set is owned by
+    // Ruby. Remove it and send the wire op; the pushed re-render shows
+    // the result.
+    rootGraph.events.addEventListener("link-created", function (ev) {
+      if (building) return;
+      var link = ev.detail;
+      var s = rootGraph.getNodeById(link.origin_id),
+          d = rootGraph.getNodeById(link.target_id);
+      try { rootGraph.removeLink(link.id); } catch (e) { /* gone */ }
+      if (!s || !d) return;
+      var from = s._odc && s._odc.name, to = d._odc && d._odc.name;
+      if (!from || !to) return;
+      if (d.isSubgraphNode && d.isSubgraphNode()) {
+        toast("'" + to + "' is a formula - edit via fx or dive in", true);
+        return;
+      }
+      wire(from, to);
+    });
+  }
+
+  function updateCrumbs() {
+    var sub = canvas && canvas.subgraph;
+    document.getElementById("gback").style.display = sub ? "" : "none";
+    document.getElementById("gcrumb").textContent =
+      sub ? ("\u2039 " + sub.name) : "";
+  }
+
+  document.getElementById("gback").addEventListener("click", function () {
+    canvas.subgraph = null;
+    canvas.setGraph(rootGraph);
+    updateCrumbs();
   });
+
+  function ensureCanvas() {
+    if (canvas) return;
+    var el = document.getElementById("lgcanvas");
+    canvas = new lg.LGraphCanvas(el, new lg.LGraph());
+    canvas.clear_background = true;
+    canvas.clear_background_color = cssVar("--bg");
+    canvas.allow_searchbox = false;
+    canvas.render_connection_arrows = true;
+    canvas.getCanvasMenuOptions = function () {
+      return [{ content: "New attribute",
+        callback: function () { openNewAttr(); } }];
+    };
+    canvas.showLinkMenu = linkMenu;
+    canvas.onNodeDblClicked = function (n) {
+      if (n.isSubgraphNode && n.isSubgraphNode()) {
+        canvas.openSubgraph(n.subgraph);
+        return;
+      }
+      if (n._odc) openFx(n._odc.name);
+    };
+    canvas.deleteSelected = function () {
+      toast("Nodes are data-owned - use fx or the panel to edit");
+    };
+    el.addEventListener("subgraph-opened", updateCrumbs);
+    window.addEventListener("resize", function () { canvas.resize(); });
+    requestAnimationFrame(function () { canvas.resize(); });
+  }
 
   // ---- boot -----------------------------------------------------------
   window.renderGraph = function (data) {
     cur = data;
-    selConn = null;
     document.getElementById("gtitle").textContent =
       (data.label || "") + " - dependencies";
     var empty = !(data.graph && data.graph.nodes && data.graph.nodes.length);
     document.getElementById("gmsg").style.display = empty ? "block" : "none";
 
-    if (editor && editor.view && editor.view.area && editor.view.area.transform) {
-      savedView = editor.view.area.transform;
+    if (canvas && canvas.ds) {
+      savedView = { scale: canvas.ds.scale,
+                    offset: [canvas.ds.offset[0], canvas.ds.offset[1]] };
     }
-
-    // Fresh container each render: rete's zoom/drag leaves bound wheel/
-    // pointer listeners on the element, so reusing it would stack them.
-    var old = document.getElementById("rete");
-    var container = old.cloneNode(false);
-    old.parentNode.replaceChild(container, old);
-    if (editor) {
-      try { editor.destroy(); } catch (e) { /* best effort */ }
-    }
-    editor = new Rete.NodeEditor("odcdep@0.1.0", container);
-    editor.use(ConnectionPlugin.default);
-    editor.use(VueRenderPlugin.default, { component: DepNode });
-    editor.use(ContextMenuPlugin.default, {
-      searchBar: false,
-      delay: 120,
-      items: { "New attribute": function () { openNewAttr(); } },
-      // default allocate returns [] per component which still registers a
-      // bare menu item - return null so only our item shows
-      allocate: function () { return null; },
-      // nodes are data-owned: hide the stock Delete/Clone, offer the
-      // formula canvas on real params instead
-      nodeItems: function (n) {
-        var items = { Delete: false, Clone: false };
-        if (n.data.t === "param") {
-          items["Open formula canvas"] = function () { openFx(n.data.v); };
-        } else {
-          items["(external / builtin)"] = function () {};
-        }
-        return items;
-      }
-    });
-    components.forEach(function (c) { editor.register(c); });
 
     building = true;
-    buildEditor(data.graph || { nodes: [], edges: [] }).then(function () {
-      editor.view.resize();
-      if (savedView && editor.view && editor.view.area) {
-        editor.view.area.transform = savedView;
-        editor.view.area.update();
-      }
-      building = false;
-      editor.trigger("process");
-    }).catch(function (e) {
-      building = false;
-      toast("graph build failed: " + (e && e.message || e), true);
-    });
+    applyTheme();
+    ensureCanvas();
+    rootGraph = new lg.LGraph();
+    buildTop(rootGraph, data.graph || { nodes: [], edges: [] });
+    wireLinkEvents();
+    canvas.subgraph = null;
+    canvas.setGraph(rootGraph);
+    building = false;
 
-    wireEditorEvents();
+    if (savedView && !empty) {
+      canvas.ds.scale = savedView.scale;
+      canvas.ds.offset[0] = savedView.offset[0];
+      canvas.ds.offset[1] = savedView.offset[1];
+      canvas.setDirty(true, true);
+    }
+    updateCrumbs();
   };
 
-  document.addEventListener("keydown", function (ev) {
-    if ((ev.key === "Delete" || ev.key === "Backspace") && selConn && editor &&
-        !building) {
-      var c = selConn;
-      selConn = null;
-      try { editor.removeConnection(c); } catch (e) { /* already gone */ }
-    }
-  });
+  // Debug/dev hook (same role as __dbg in the nodes editor).
+  window.__odc = function () {
+    return { canvas: canvas, root: rootGraph,
+             current: canvas && canvas.graph };
+  };
 
   if (window.sketchup && sketchup.gready) sketchup.gready("");
 })();
