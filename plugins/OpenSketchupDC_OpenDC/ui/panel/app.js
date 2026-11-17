@@ -221,12 +221,13 @@ window.OpenDC = (function () {
 
     // Multi-select: the batch editor is the primary UI, so the per-entity
     // cards fold behind a summary bar instead of filling the panel.
-    host.innerHTML = ents.length > 1
+    var globSec = configMode ? globalsSection() : "";
+    host.innerHTML = (ents.length > 1
       ? '<details id="entsfold"' + (entsFolded ? "" : " open") + '>' +
         '<summary><span class="fcount">' + ents.length + '</span> ' +
         'selected components</summary>' +
         '<div class="foldbody">' + cards + '</div></details>'
-      : cards;
+      : cards) + globSec;
 
     var fold = host.querySelector("#entsfold");
     if (fold) {
@@ -344,6 +345,30 @@ window.OpenDC = (function () {
     return '<details class="foldsec dictsec" data-fold="dicts">' +
       '<summary>Attribute dictionaries <span class="fcount">' + dicts.length +
       '</span></summary>' + inner + '</details>';
+  }
+
+  // Model-level globals for global!name formulas - Configure mode only,
+  // one shared block below the entity cards. Values live as plain keys on
+  // the model's open_dc dictionary; numeric-looking input stores a number
+  // so formulas can do math on them.
+  function globalsSection() {
+    var gs = state.globals || [];
+    var rows = gs.map(function (g) {
+      return '<div class="prow">' +
+        '<span class="pname" title="global!' + esc(g.name) + '"><b>' + esc(g.name) + '</b></span>' +
+        '<span><input data-gset="' + esc(g.name) + '" value="' + esc(fmt(g.value)) + '"></span>' +
+        '<span><button class="small danger" data-gdel="' + esc(g.name) + '" ' +
+        'title="Delete this global">&times;</button></span></div>';
+    }).join("");
+    return '<details class="foldsec globsec" data-fold="globals">' +
+      '<summary>Globals <span class="fcount">' + gs.length + '</span>' +
+      ' <span class="downer">model-wide - ref as global!name</span></summary>' +
+      rows +
+      '<form class="addform" data-gadd>' +
+      '<input name="name" placeholder="name (no spaces)" required>' +
+      '<input name="value" placeholder="value">' +
+      '<button type="submit" class="primary" title="Add the global">Add</button></form>' +
+      '</details>';
   }
 
   function renderParam(e, p, advanced) {
@@ -805,6 +830,30 @@ window.OpenDC = (function () {
       });
     });
 
+    host.querySelectorAll("[data-gset]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        send("setGlobal", { name: inp.getAttribute("data-gset"), value: inp.value });
+      });
+    });
+
+    host.querySelectorAll("[data-gdel]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var n = btn.getAttribute("data-gdel");
+        if (!confirm("Delete global '" + n + "'? Formulas using global!" + n + " will fail.")) return;
+        send("deleteGlobal", { name: n });
+      });
+    });
+
+    host.querySelectorAll("[data-gadd]").forEach(function (form) {
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        send("setGlobal", {
+          name: form.elements.namedItem("name").value,
+          value: form.elements.namedItem("value").value
+        });
+      });
+    });
+
     host.querySelectorAll("[data-addform]").forEach(function (form) {
       form.addEventListener("submit", function (ev) {
         ev.preventDefault();
@@ -1190,6 +1239,13 @@ window.OpenDC = (function () {
     (state.sceneprops || []).forEach(function (n) {
       items.push({ label: "scene!" + n, insert: "scene!" + n, kind: "skp" });
     });
+    // Ancestor/model scopes complete only their prefix - the member list
+    // can't be known here (the panel sees one entity, and a fresh model may
+    // have no globals yet), so they insert as text and attr completions
+    // follow on the next keystroke.
+    items.push({ label: "parent!...", insert: "parent!", kind: "scope" });
+    items.push({ label: "root!...", insert: "root!", kind: "scope" });
+    items.push({ label: "global!...", insert: "global!", kind: "scope" });
     (e.dictionaries || []).forEach(function (d) {
       if (!/^[a-z_][a-z0-9_]*$/i.test(d.name)) return;
       d.attrs.forEach(function (a) {
@@ -1280,6 +1336,10 @@ window.OpenDC = (function () {
       var sel2 = window.getSelection();
       sel2.removeAllRanges();
       sel2.addRange(nr);
+    } else if (item.kind === "scope") {
+      var tn = document.createTextNode(item.insert);
+      r.insertNode(tn);
+      fxCaretAfter(tn);
     } else {
       var node = (item.kind === "attr")
         ? fxPillEl("attr", item.insert)
@@ -1362,6 +1422,7 @@ window.OpenDC = (function () {
     render();
   });
   document.getElementById("btn-refresh").addEventListener("click", function () { send("refresh"); });
+  document.getElementById("btn-scenegraph").addEventListener("click", function () { send("sceneGraph"); });
   document.getElementById("btn-redraw").addEventListener("click", function () {
     send("redraw", { entityIds: (state.entities || [])
       .filter(function (e) { return e.dynamic !== false; })

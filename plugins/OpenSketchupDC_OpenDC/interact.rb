@@ -101,6 +101,9 @@ module OpenSketchupDC
           raise Expression::Error, "no parent context" if path.length < 2
 
           param_value(path[0..-2], name, model)
+        when "root"
+          # path[0] is the outermost entity on the pick path.
+          param_value(path[0..0], name, model)
         when "global"
           dict_name = DCReader.dict_name_for(path[-1])
           v = model.get_attribute(dict_name, name)

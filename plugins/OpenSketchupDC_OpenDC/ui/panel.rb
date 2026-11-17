@@ -112,10 +112,13 @@ module OpenSketchupDC
         when "setInstName"   then cmd_set_inst_name(p)
         when "setEntityProp" then cmd_set_entity_prop(p)
         when "setDictAttr"   then cmd_set_dict_attr(p)
+        when "setGlobal"     then cmd_set_global(p)
+        when "deleteGlobal"  then cmd_delete_global(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
         when "graph"         then cmd_graph(p["entityId"])
+        when "sceneGraph"    then cmd_scene_graph
         when "nodes"         then cmd_nodes(p)
         when "qaEcho"        then @qa_last = p["r"] # dev/QA read-back channel
         when "convert" then with_entity(p["entityId"]) do |e|
@@ -292,6 +295,54 @@ module OpenSketchupDC
         end
       end
 
+      # Model-level globals (global!name) live as plain keys on the
+      # model's open_dc dictionary. Numeric-looking input stores a number
+      # so formulas can do math; a nil write deletes the key (SketchUp
+      # dictionary semantics).
+      def cmd_set_global(p)
+        name = p["name"].to_s.strip.downcase
+        unless name =~ /\A[a-z_][a-z0-9_]*\z/
+          push_error("Global names use letters, digits and underscores - " \
+                     "'#{p['name']}' isn't valid")
+          return
+        end
+
+        raw = p["value"].to_s.strip
+        value = begin
+          Float(raw)
+        rescue StandardError
+          raw
+        end
+        Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set global #{name}") do
+          Sketchup.active_model.set_attribute(OS_DC_DICT, name, value)
+        end
+        dirty_osdc_roots
+        push_state
+      end
+
+      def cmd_delete_global(p)
+        name = p["name"].to_s.strip.downcase
+        return if name.empty?
+
+        Helpers.undo_wrap(Sketchup.active_model, "Open DC: Delete global #{name}") do
+          Sketchup.active_model.set_attribute(OS_DC_DICT, name, nil)
+        end
+        dirty_osdc_roots
+        push_state
+      end
+
+      # A global can feed any formula at any depth - dirty every
+      # top-level osdc owner so the next flush re-evaluates its users.
+      def dirty_osdc_roots
+        Sketchup.active_model.entities.each do |e|
+          next unless DCReader.dict_of(e, OS_DC_DICT) ||
+                      (e.is_a?(Sketchup::ComponentInstance) &&
+                       DCReader.dict_of(e.definition, OS_DC_DICT))
+
+          Engine.mark_dirty(e)
+        end
+      end
+
       def cmd_delete_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
@@ -422,10 +473,14 @@ module OpenSketchupDC
             errors << "unknown attribute '#{n}'" +
                       (sug ? " - did you mean '#{sug}'?" : "")
           when "global"
-            g = DCReader.dict_of(Sketchup.active_model, dict_name)
+            g = DCReader.dict_of(Sketchup.active_model, OS_DC_DICT)
             errors << "no global attribute '#{n}'" unless DCReader.dict_key?(g, n)
+            hints << osdc_only("global!#{n}", dict_name)
           when "parent"
             hints << "parent!#{n} resolves when this component is nested - not verified here"
+          when "root"
+            hints << "root!#{n} resolves to the outermost Open DC component - not verified here"
+            hints << osdc_only("root!#{n}", dict_name)
           when "sketchup"
             errors << "unknown SketchUp attribute '#{n}'" unless SkProps.known?(n)
             hints << osdc_only("sketchup!#{n}", dict_name)
@@ -706,6 +761,7 @@ module OpenSketchupDC
         ["References", [
           ["name", "attribute on this component"],
           ["parent!name", "attribute on the parent component"],
+          ["root!name", "attribute on the outermost Open DC component"],
           ["global!name", "model-global attribute (open_dc)"],
           ["node!name", "attribute on a sibling node"],
           ["sketchup!name", "native property: name, instname, description, layer, guid, x, lenx, ..."],
@@ -805,6 +861,10 @@ module OpenSketchupDC
         push_error(e.message)
       end
 
+      # Pseudo entity-id for the scene-level graph: not resolvable through
+      # entity(), used as the layout/session key instead.
+      SCENE_GRAPH_ID = "$scene".freeze
+
       # Floating dependency-graph window. One shared dialog retargets to
       # whichever entity card's Graph button was clicked last; the page
       # handshake (gready) triggers the first data push after load.
@@ -812,38 +872,52 @@ module OpenSketchupDC
         with_entity(eid) do |ent|
           @graph_eid = eid
           @graph_pending = build_graph_pending(ent, eid)
-          if @graph_dialog.nil?
-            @graph_dialog = ::UI::HtmlDialog.new(
-              dialog_title: "Open DC - Dependency Graph",
-              preferences_key: "#{PLUGIN_ID}_graph",
-              scrollable: false,
-              resizable: true,
-              width: 800,
-              height: 600,
-              min_width: 400,
-              min_height: 300,
-              style: ::UI::HtmlDialog::STYLE_UTILITY
-            )
-            @graph_dialog.add_action_callback("gready") do |_ctx, arg|
-              @gqa = arg unless arg.to_s.empty? # dev/QA read-back channel
-              push_graph
-            end
-            @graph_dialog.add_action_callback("gact") do |_ctx, json|
-              graph_apply(JSON.parse(json.to_s))
-            end
-            @graph_dialog.set_can_close do
-              @graph_dialog = nil
-              true
-            end
-            @graph_dialog.set_file(GRAPH_FILE)
-            @graph_dialog.show
-          else
-            push_graph
-            @graph_dialog.bring_to_front
-          end
+          open_graph_window
         end
       rescue StandardError => e
         push_error(e.message)
+      end
+
+      # Scene-level graph: every top-level osdc component as a node,
+      # attr-to-attr wires across entities write name!/global! formulas.
+      def cmd_scene_graph
+        @graph_eid = SCENE_GRAPH_ID
+        @graph_pending = build_scene_pending(Sketchup.active_model)
+        open_graph_window
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      def open_graph_window
+        if @graph_dialog.nil?
+          @graph_dialog = ::UI::HtmlDialog.new(
+            dialog_title: "Open DC - Dependency Graph",
+            preferences_key: "#{PLUGIN_ID}_graph",
+            scrollable: false,
+            resizable: true,
+            width: 800,
+            height: 600,
+            min_width: 400,
+            min_height: 300,
+            style: ::UI::HtmlDialog::STYLE_UTILITY
+          )
+          @graph_dialog.add_action_callback("gready") do |_ctx, arg|
+            @gqa = arg unless arg.to_s.empty? # dev/QA read-back channel
+            push_graph
+          end
+          @graph_dialog.add_action_callback("gact") do |_ctx, json|
+            graph_apply(JSON.parse(json.to_s))
+          end
+          @graph_dialog.set_can_close do
+            @graph_dialog = nil
+            true
+          end
+          @graph_dialog.set_file(GRAPH_FILE)
+          @graph_dialog.show
+        else
+          push_graph
+          @graph_dialog.bring_to_front
+        end
       end
 
       def read_graph_set(ent, eid)
@@ -855,8 +929,11 @@ module OpenSketchupDC
       def graph_apply(data)
         case data["op"].to_s
         when "openNodes" then return cmd_nodes(data)
+        when "openEntityGraph" then return cmd_graph(data["entityId"])
+        when "wireEntity"  then return graph_wire_entity(data)
         when "addParam"  then return graph_add_param(data)
         when "previewDoc", "applyDoc" then return graph_apply_doc(data)
+        when "saveLayout" then return graph_save_layout(data)
         end
 
         ent = entity(data["entityId"].to_s)
@@ -878,10 +955,224 @@ module OpenSketchupDC
         end
         reevaluate(ent, dict_name)
         push_state
-        @graph_pending = build_graph_pending(ent, data["entityId"].to_s)
+        refresh_pending_graph(ent, data["entityId"].to_s)
         push_graph
       rescue StandardError => e
         push_error(e.message)
+      end
+
+      # Re-push whichever graph the window is showing: the scene map when
+      # in scene mode, the per-entity dependency graph otherwise.
+      def refresh_pending_graph(ent, eid)
+        @graph_pending =
+          if @graph_pending && @graph_pending["scene"]
+            build_scene_pending(Sketchup.active_model)
+          else
+            build_graph_pending(ent, eid)
+          end
+      end
+
+      # Manual node positions from the graph window, kept per entity for
+      # the session and merged into every push: re-renders (formula edits,
+      # reorders, engine refreshes) then leave the user's layout alone.
+      def graph_save_layout(data)
+        pos = {}
+        (data["positions"] || {}).each do |name, xy|
+          next unless xy.is_a?(Array) && xy.length >= 2
+
+          pos[name.to_s] = [xy[0].to_f, xy[1].to_f]
+        end
+        groups = (data["groups"] || []).filter_map do |gd|
+          next unless gd.is_a?(Hash)
+
+          b = gd["bounding"]
+          next unless b.is_a?(Array) && b.length >= 4
+
+          { "title" => gd["title"].to_s, "color" => gd["color"].to_s,
+            "bounding" => b[0, 4].map(&:to_f) }
+        end
+        collapsed = {}
+        (data["collapsed"] || {}).each do |name, flag|
+          collapsed[name.to_s] = true if flag
+        end
+        folds = {}
+        (data["folds"] || {}).each do |fid, fd|
+          next unless fd.is_a?(Hash)
+
+          members = {}
+          (fd["members"] || {}).each do |m, v|
+            members[m.to_s] = true if v
+          end
+          inner_pos = {}
+          (fd["innerPos"] || {}).each do |m, xy|
+            next unless xy.is_a?(Array) && xy.length >= 2
+
+            inner_pos[m.to_s] = [xy[0].to_f, xy[1].to_f]
+          end
+          inner_col = {}
+          (fd["innerCollapsed"] || {}).each do |m, v|
+            inner_col[m.to_s] = true if v
+          end
+          p = fd["pos"]
+          folds[fid.to_s] = {
+            "title" => fd["title"].to_s,
+            "pos" => p.is_a?(Array) ? p[0, 2].map(&:to_f) : [120.0, 120.0],
+            "members" => members, "innerPos" => inner_pos,
+            "innerCollapsed" => inner_col }
+        end
+        show_all = {}
+        (data["showAll"] || {}).each do |name, flag|
+          show_all[name.to_s] = true if flag
+        end
+        stencils = {}
+        (data["stencils"] || {}).each do |vid, sd|
+          next unless sd.is_a?(Hash) && sd["doc"].is_a?(Hash)
+
+          p = sd["pos"]
+          stencils[vid.to_s] = {
+            "title" => sd["title"].to_s, "doc" => sd["doc"],
+            "pos" => p.is_a?(Array) ? p[0, 2].map(&:to_f) : [120.0, 120.0] }
+        end
+        (@graph_layout ||= {})[data["entityId"].to_s] =
+          { "positions" => pos, "groups" => groups,
+            "collapsed" => collapsed, "folds" => folds,
+            "showAll" => show_all, "stencils" => stencils }
+      end
+
+      # Scene-mode wire: drag from one entity's attr output to another's
+      # attr input writes the corresponding scope reference as the target's
+      # formula. Top-level entities have no ancestors, so the scope is the
+      # source's node name - or global! for the Globals pseudo-node.
+      def graph_wire_entity(data)
+        from_eid = data["fromEid"].to_s
+        from_attr = data["fromAttr"].to_s
+        ent = entity(data["toEid"].to_s)
+        if ent.nil?
+          push_error("Target entity no longer available")
+          return
+        end
+
+        to_attr = data["toAttr"].to_s
+        ref =
+          if from_eid == "$globals"
+            "global!#{from_attr}"
+          else
+            src = entity(from_eid)
+            if src.nil?
+              push_error("Source entity no longer available")
+              return
+            end
+            scope = Engine.node_name_of(src)
+            unless scope =~ /\A[a-z_][a-z0-9_]*\z/
+              return push_error(
+                "'#{entity_label(src)}' can't be a formula scope - " \
+                "its node name '#{scope}' isn't a valid identifier")
+            end
+            "#{scope}!#{from_attr}"
+          end
+
+        v = validate_formula(ent, ref, to_attr)
+        unless v["ok"]
+          push_error("Formula not saved: #{v['errors'].join('; ')}")
+          return
+        end
+        dict_name = DCReader.dict_name_for(ent)
+        Helpers.undo_wrap(Sketchup.active_model, "Open DC: Wire #{to_attr}") do
+          DCWriter.set_meta(ent, to_attr, "formula", ref, dict_name: dict_name)
+        end
+        reevaluate(ent, dict_name)
+        push_state
+        refresh_pending_graph(ent, data["toEid"].to_s)
+        push_graph
+      rescue StandardError => e
+        push_error(e.message)
+      end
+
+      # Scene payload: every top-level osdc entity as a node (attr slots
+      # both ways), plus the $globals pseudo-node as a read-only source.
+      # Classic components can't participate - name! reads only open_dc
+      # dicts, and Trimble's engine owns their writes.
+      def build_scene_pending(model)
+        layout = (@graph_layout || {})[SCENE_GRAPH_ID] || {}
+        {
+          "label" => "Scene",
+          "entityId" => SCENE_GRAPH_ID,
+          "scene" => true,
+          "graph" => scene_graph(model),
+          "positions" => layout["positions"],
+          "groups" => layout["groups"],
+          "collapsed" => layout["collapsed"],
+          "folds" => layout["folds"],
+          "showAll" => layout["showAll"],
+          "stencils" => layout["stencils"]
+        }
+      end
+
+      def scene_graph(model)
+        ents = model.entities.select { |e| Engine.dynamic_child?(e) }
+        rows = ents.map do |e|
+          eid = register(e)
+          ps = read_graph_set(e, eid)
+          attrs = ps.params.reject do |p|
+            p.internal? || SkProps.driver_name?(p.name)
+          end
+          { "id" => eid, "entity" => e, "label" => entity_label(e),
+            "kind" => e.is_a?(Sketchup::Group) ? "group" : "component",
+            "dcname" => Engine.node_name_of(e),
+            "ps" => ps,
+            "attrs" => attrs.map { |p|
+              { "name" => p.name, "formula" => p.formula.to_s,
+                "builtin" => p.builtin?,
+                "hasFormula" => !p.formula.to_s.empty? } } }
+        end
+        globals = global_params(model)
+        nodes = [{ "id" => "$globals", "label" => "Globals", "pseudo" => true,
+                   "attrs" => globals.map { |g| { "name" => g["name"] } } }] +
+                rows.map { |r| r.except("ps", "entity") }
+        { "nodes" => nodes, "edges" => scene_edges(rows, globals) }
+      end
+
+      # Cross-entity edges: a formula's name!attr ref becomes an edge from
+      # the source entity's attr output to the referencing attr's input;
+      # global! edges originate at the $globals pseudo-node. parent!/root!/
+      # sketchup!/model!/scene!/dict scopes are out of scene scope here.
+      def scene_edges(rows, globals)
+        gmap = globals.to_h { |g| [g["name"], g["value"]] }
+        by_scope = {}
+        rows.each { |r| by_scope[Engine.node_name_of(r["entity"])] ||= r["id"] }
+
+        edges = []
+        rows.each do |r|
+          r["ps"].params.each do |p|
+            next if p.formula.to_s.empty?
+
+            Expression.refs(p.formula).each do |scope, n|
+              next if scope.nil?
+
+              n = n.to_s.downcase
+              if scope == "global"
+                lit = gmap.key?(n) ? global_literal(gmap[n]) : "0"
+                edges << { "from" => "$globals", "fromAttr" => n,
+                           "to" => r["id"], "toAttr" => p.name,
+                           "refId" => "global!#{n}", "literal" => lit }
+                next
+              end
+              src_id = by_scope[scope]
+              next if src_id.nil? || src_id == r["id"]
+
+              src_row = rows.find { |x| x["id"] == src_id }
+              dep_p = src_row && src_row["ps"][n]
+              edges << { "from" => src_id, "fromAttr" => n, "to" => r["id"],
+                         "toAttr" => p.name, "refId" => "#{scope}!#{n}",
+                         "literal" => edge_literal(dep_p, p) }
+            end
+          end
+        end
+        edges.uniq
+      end
+
+      def global_literal(v)
+        v.is_a?(Numeric) ? v.round(6).to_s : %("#{v.to_s.gsub('"', "")}")
       end
 
       # Pending payload for the graph window: the dependency graph plus
@@ -893,6 +1184,11 @@ module OpenSketchupDC
           "label" => entity_label(ent),
           "entityId" => eid,
           "graph" => entity_graph(ps),
+          "positions" => ((@graph_layout || {})[eid] || {})["positions"],
+          "groups" => ((@graph_layout || {})[eid] || {})["groups"],
+          "collapsed" => ((@graph_layout || {})[eid] || {})["collapsed"],
+          "folds" => ((@graph_layout || {})[eid] || {})["folds"],
+          "stencils" => ((@graph_layout || {})[eid] || {})["stencils"],
           "palette" => {
             "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
@@ -958,7 +1254,7 @@ module OpenSketchupDC
         end
         reevaluate(ent, dict_name)
         push_state
-        @graph_pending = build_graph_pending(ent, eid)
+        refresh_pending_graph(ent, eid)
         push_graph
       end
 
@@ -1231,6 +1527,11 @@ module OpenSketchupDC
       # its entity is gone for good.
       def refresh_graph_window
         return if @graph_dialog.nil?
+
+        if @graph_eid == SCENE_GRAPH_ID
+          @graph_pending = build_scene_pending(Sketchup.active_model)
+          return push_graph
+        end
 
         cur = entity(@graph_eid.to_s)
         dyn = Selection.dynamic_targets(Sketchup.active_model)

@@ -110,7 +110,7 @@ Requires **SketchUp 2024+** (Windows/Mac).
 10cm  25.4mm  2'  4"        # lengths → inches
 "text" & value              # string concat
 + - * / % ^  = <> < > <= >= AND OR NOT
-attr  parent!attr  name!attr  global!attr          # references
+attr  parent!attr  name!attr  global!attr  root!attr  # references
 sketchup!name  sketchup!layer                      # native entity props
 su_instanceset!price  DICTATTR("dict","key")       # foreign dictionaries
 model!units  scene!name                            # read-only globals
@@ -120,8 +120,11 @@ LARGEST SMALLEST OPTIONINDEX OPTIONVALUE NEAREST
 SET REDRAW ALERT GOTOSCENE ANIMATE*                # onClick actions
 ```
 
-`global!` parameters live on the model itself — set them via the console or
-future UI: `Sketchup.active_model.set_attribute("open_dc", "height", 100)`.
+`global!` parameters live on the model itself — edit them in the panel's
+**Globals** section (Configure mode) or via console:
+`Sketchup.active_model.set_attribute("open_dc", "height", 100)`. Changing
+one marks every osdc component dirty so dependents recompute; deleting one
+flags `no global attribute` on its users until it's restored.
 Writable `sketchup!` props and foreign dict keys accept **driver
 formulas**: attach fx in the panel's Configure sections and every
 recompute writes the computed value back to SketchUp (e.g.

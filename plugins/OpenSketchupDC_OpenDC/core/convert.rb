@@ -89,12 +89,16 @@ module OpenSketchupDC
       def to_open_dc_child(c)
         convert_target(c)
         convert_target(c.definition) if c.is_a?(Sketchup::ComponentInstance)
+        # Recurse: a classic grandchild would otherwise stay Trimble-owned
+        # with its parent! refs dangling - the parent's dict is gone.
+        child_entities_of(c).each { |gc| to_open_dc_child(gc) }
         record_nominals(c)
       end
 
       def to_classic_child(c)
         revert_target(c)
         revert_target(c.definition) if c.is_a?(Sketchup::ComponentInstance)
+        child_entities_of(c).each { |gc| to_classic_child(gc) }
       end
 
       # Store the current unscaled bounds as _len<axis>_nominal so Len* scale

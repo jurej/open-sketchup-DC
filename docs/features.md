@@ -97,6 +97,7 @@ scene!name                # filename, units, lat/lng, north angle,
                           # georeferenced, scenecount + active scene props
 global!panel_height       # model-level shared parameters
 parent!width  name!attr   # hierarchy references (classic dialect)
+root!width                # outermost osdc component, any depth
 ```
 
 All of these appear as **input-node submenus** in both node editors
@@ -110,6 +111,17 @@ dependency edge into a formula-less node and the graph writes + adopts
 the new formula for you, with cycle detection guarding loops.
 Double-click a node to open its expression canvas (functions, scoped
 refs, all builtins — including `onClick`).
+
+## Scene graph — wiring components together
+
+The ▦ toolbar button opens a scene-level graph that needs no selection:
+every top-level osdc component appears as a node with per-attribute
+in/out slots, plus a Globals pseudo-node. Dragging `attr → attr` across
+nodes writes the right scope reference into the target's formula
+(`name!attr`, or `global!attr` from the Globals node); clicking a link
+unlinks back to a literal, and double-clicking a node dives into that
+component's own dependency graph. Positions and group boxes persist per
+session, same as the per-entity graph.
 
 ## onClick actions
 

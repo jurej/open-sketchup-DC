@@ -183,6 +183,19 @@ Panel writes go straight to the entity/definition (`SkProps.write`),
 never through `DCWriter` — no dict adoption, so they can't drive the
 applier.
 
+## `root!` — outermost component scope (osdc formulas)
+
+`parent!` is strictly one level: a grandchild can't see its grandparent.
+`root!name` closes that gap — it resolves against the **topmost entity
+of the evaluation tree** (the outermost osdc component), so a deeply
+nested child can read a shared assembly parameter directly instead of
+re-declaring `x = parent!x` on every intermediate level. The value read
+is the root's *freshly computed* value (then its stored default), same
+as `parent!`. At top level the entity is its own root, so `root!name`
+is a valid self-reference there too. `root` is a reserved scope like
+`parent`/`sketchup` — a sibling node or dictionary literally named
+`root` stays reachable via `DICTATTR` only. osdc-only, like `global!`.
+
 ## `model!` / `scene!` — global SketchUp inputs (osdc formulas)
 
 Two more reserved, read-only scopes cover model-level and active-scene
@@ -205,9 +218,9 @@ Every dictionary on the instance **and** its definition (any plugin's:
 `SU_InstanceSet` Advanced Attributes, `AppliedSchemaTypes`, etc., plus
 `dynamic_attributes`/`open_dc` themselves) is a reference scope:
 
-- `su_instanceset!price` — scope resolution order is `parent`/`global`/
-  `sketchup`, then sibling node name, **then** dictionary name
-  (case-insensitive). Nodes win name collisions.
+- `su_instanceset!price` — scope resolution order is `parent`/`root`/
+  `global`/`sketchup`/`model`/`scene`, then sibling node name, **then**
+  dictionary name (case-insensitive). Nodes win name collisions.
 - `DICTATTR("dict name", "key")` — function form for dict names that
   aren't valid identifiers (spaces, dots) or for explicit clarity.
 

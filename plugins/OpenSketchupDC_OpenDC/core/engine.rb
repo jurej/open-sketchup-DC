@@ -83,10 +83,13 @@ module OpenSketchupDC
 
         ps = DCReader.read(inst, dict_name: OS_DC_DICT)
         computed, errors = evaluate_params(inst, ps, parent_ctx, model, copy_index)
-        write_back(inst, computed, errors)
+        write_back(inst, ps, computed, errors)
         Applier.apply(inst, applied_values(ps, computed), dict_name: OS_DC_DICT)
 
         ctx = { inst: inst, ps: ps, computed: computed, model: model }
+        # root! resolves against the topmost entity of this eval tree:
+        # the top call roots at itself, nested levels inherit it.
+        ctx[:root] = parent_ctx ? (parent_ctx[:root] || parent_ctx) : ctx
         ents = child_entities_collection(inst)
         child_entities(inst).each do |child|
           next unless child.valid? # sync_copies may erase siblings mid-iteration
@@ -180,8 +183,9 @@ module OpenSketchupDC
           p.value
         end
 
+        self_ctx = { inst: inst, ps: ps, computed: computed, model: model }
         ref = lambda do |scope, n|
-          resolve_ref(scope, n, inst, parent_ctx, model)
+          resolve_ref(scope, n, inst, parent_ctx, model, self_ctx)
         end
 
         meta = lambda do |n, f|
@@ -209,7 +213,7 @@ module OpenSketchupDC
         [computed, errors]
       end
 
-      def resolve_ref(scope, name, inst, parent_ctx, model)
+      def resolve_ref(scope, name, inst, parent_ctx, model, self_ctx = nil)
         case scope
         when "parent"
           raise Expression::Error, "no parent context" unless parent_ctx
@@ -219,6 +223,18 @@ module OpenSketchupDC
           else
             p = parent_ctx[:ps][name]
             raise Expression::Error, "parent has no attribute '#{name}'" if p.nil?
+
+            p.value
+          end
+        when "root"
+          # The tree's outermost entity; at top level that IS this entity,
+          # so root!name stays a valid (self) reference.
+          rc = (parent_ctx && parent_ctx[:root]) || self_ctx
+          if rc[:computed].key?(name)
+            rc[:computed][name]
+          else
+            p = rc[:ps][name]
+            raise Expression::Error, "root has no attribute '#{name}'" if p.nil?
 
             p.value
           end
@@ -323,11 +339,22 @@ module OpenSketchupDC
       end
 
       # Write computed values + errors back to the instance dict.
-      # Skips unchanged values to limit observer churn.
-      def write_back(inst, computed, errors)
+      # Skips unchanged values to limit observer churn. A recovered attr
+      # clears its _<n>_error slot - except "apply: " messages, which the
+      # apply pass owns (clearing here would race flag_driver_error).
+      def write_back(inst, ps, computed, errors)
         computed.each do |n, v|
           cur = inst.get_attribute(OS_DC_DICT, n)
           inst.set_attribute(OS_DC_DICT, n, v) unless same?(cur, v)
+        end
+        ps.each do |p|
+          next if p.internal? || errors.key?(p.name)
+
+          key = "_#{p.name}_error"
+          cur = inst.get_attribute(OS_DC_DICT, key)
+          next if cur.nil? || cur.to_s.start_with?(Applier::APPLY_ERR_PREFIX)
+
+          inst.set_attribute(OS_DC_DICT, key, nil)
         end
         errors.each do |n, msg|
           inst.set_attribute(OS_DC_DICT, "_#{n}_error", msg)

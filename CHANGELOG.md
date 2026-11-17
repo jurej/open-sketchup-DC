@@ -23,6 +23,36 @@
 - Panel: foldable **SketchUp** and **Attribute dictionaries** sections in
   Configure mode only; the Options view stays clean. Autocomplete and
   both node editors gained `sketchup!`/`dict`/`model!`/`scene!` entries.
+- **`root!name` scope**: reads the outermost osdc component's attribute
+  at any nesting depth — the multi-level answer to one-level `parent!`.
+  Reads the root's freshly computed value; at top level it's a valid
+  self-reference. Reserved scope, osdc-only.
+- **Globals section** (Configure mode): add/edit/delete model-level
+  `global!name` parameters — previously console-only. Writes mark all
+  osdc components dirty so dependents recompute immediately.
+- **Scene graph** (▦ toolbar button, works with no selection): every
+  top-level osdc component as a node with per-attribute in/out slots.
+  Drag `attr → attr` across nodes to write `name!attr` (or `global!attr`
+  from the Globals pseudo-node) into the target's formula; click a link
+  to unlink back to a literal; double-click a node to dive into that
+  component's dependency graph. Layout + groups persist like the
+  per-entity graph.
+- **Expression stencils** (both graph modes): right-click canvas →
+  "Expression" gives the full formula palette (operators, literals,
+  attributes, functions). A pick seeds a scratch subgraph node — dive
+  in to compose, inputs auto-link to same-named attrs, and wiring its
+  output to a param applies the composed formula (cross-entity in
+  scene mode). Stencils persist as canvas state; Del removes them.
+- **Compact scene nodes**: builtins hide unless they carry a formula
+  or an edge endpoint. Right-click a node → "Show all attributes (N
+  hidden)" to expand; the choice persists per node.
+- **Fold nodes into subgraphs** (both graph modes): select nodes,
+  right-click canvas → "Fold N nodes into subgraph". Members collapse
+  into a proxy node and boundary edges rewire through its slots —
+  double-click or right-click → "Open subgraph" to see inside, "Unfold"
+  (menu or Del) to restore. Folded interiors stay live: they rebuild
+  from current formulas on every push. Clicking a node's titlebar now
+  also toggles litegraph's collapsed state.
 
 ### Fixes
 
@@ -40,6 +70,13 @@
   of value evaluation.
 - Dependency graph includes formula-less parameters and builtins as
   nodes — wiring a dependency into one writes + adopts the formula.
+- `_<attr>_error` clears on the first good eval — a recovered formula no
+  longer keeps a phantom error flag in the panel (`apply:` driver errors
+  remain owned by the apply pass). Typing `parent!`/`root!`/`global!`
+  into the fx field now offers the scope prefixes in autocomplete.
+- `global!` validation on a classic component checked the model's
+  `dynamic_attributes` instead of `open_dc` and skipped the osdc-only
+  warning — both fixed.
 
 ## v0.1.1 — beta 1.1
 
