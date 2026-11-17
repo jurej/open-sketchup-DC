@@ -1,14 +1,40 @@
-// Open DC node editor - Rete.js v1 expression graph.
+// Open DC node editor - litegraph (ComfyOrg fork, vendored UMD).
 // Loads an AstGraph doc via window.renderNodes(payload); edits produce a
 // preview via sketchup.nact {op:"preview"}; Apply writes the formula.
+// Node kinds map to AstGraph doc types: const/attr/ref/un/bin/call(+act)
+// plus the fixed FORMULA output node (doc t "res", UI-only).
+// Every input slot gets a companion text widget: while the slot is
+// unconnected it takes a literal port value (same "manual" semantics as
+// the Rete editor); while connected it is hidden. Single-use const
+// leaves from the doc collapse into those fields on load.
 (function () {
   "use strict";
 
-  var socketVal = new Rete.Socket("val", "Value");
-  socketVal.combineWith(socketVal.name);
+  var lg = window.litegraph && window.litegraph.js;
+  if (!lg) {
+    document.getElementById("ptitle").textContent = "litegraph failed to load";
+    return;
+  }
 
-  var editor = null;
-  var state = null;           // {entityId,name,label,functions,actions,attrs,builtins,fnArity,fnVararg,isAction}
+  // litegraph's bg pipeline is self-inconsistent on hidpi screens: the
+  // front canvas draws nodes in unscaled graph coords (device px), while
+  // drawBackCanvas applies a devicePixelRatio transform and the bg blit
+  // divides by dpr - compressing grid/links into 1/dpr of the window.
+  // Forcing dpr=1 makes resize, transforms, and hit-testing uniformly
+  // CSS-pixel based; slightly softer text, but everything lands right.
+  if (window.devicePixelRatio !== 1) {
+    try {
+      Object.defineProperty(window, "devicePixelRatio",
+        { value: 1, configurable: true });
+    } catch (e) { /* older CEF - rendering stays correct at any rate */ }
+  }
+
+  var LiteGraph = lg.LiteGraph, LGraphNode = lg.LGraphNode;
+
+  var canvas = null;      // LGraphCanvas
+  var graph = null;       // the single editable LGraph
+  var state = null;       // {entityId,name,label,functions,actions,attrs,builtins,globals,fnArity,fnVararg,isAction}
+  var building = false;   // suppress preview while rebuilding
   var toastTimer = null;
   var previewTimer = null;
 
@@ -20,77 +46,16 @@
     toastTimer = setTimeout(function () { el.className = ""; }, 2600);
   }
 
-  // ---- controls --------------------------------------------------------
-  var TextControl = {
-    props: ["ikey", "getData", "putData"],
-    template: '<input type="text" :value="value" @input="change($event)" ' +
-      '@mousedown.stop @dblclick.stop/>',
-    data: function () { return { value: "" }; },
-    methods: {
-      change: function (e) {
-        this.value = e.target.value;
-        this.putData(this.ikey, this.value);
-        requestPreview();
-      }
-    },
-    mounted: function () { this.value = this.getData(this.ikey) || ""; }
-  };
-
-  var AddArgBtn = {
-    props: ["ikey", "getData", "putData", "node"],
-    template: '<button class="addarg" title="Add an argument input" ' +
-      '@click="add" @mousedown.stop>+ arg</button>',
-    methods: {
-      add: function () {
-        var n = this.node;
-        n.addInput(new Rete.Input("arg" + n.inputs.size, "" + n.inputs.size, socketVal));
-        n.update();
-        editor.view.updateConnections({ node: n });
-        requestPreview();
-      }
-    }
-  };
-
-  // Operator chooser - edits data.v among a fixed op list.
-  var OpSelect = {
-    props: ["ikey", "getData", "putData", "ops"],
-    template: '<select class="nops" :value="value" @change="change($event)" ' +
-      '@mousedown.stop><option v-for="o in ops" :value="o">{{o}}</option></select>',
-    data: function () { return { value: "" }; },
-    methods: {
-      change: function (e) {
-        this.value = e.target.value;
-        this.putData(this.ikey, this.value);
-        requestPreview();
-      }
-    },
-    mounted: function () { this.value = this.getData(this.ikey) || ""; }
-  };
-
-  // Rete.Control is abstract - controls must subclass it (ES6 class).
-  class ODCControl extends Rete.Control {
-    constructor(key, component, extra) {
-      super(key);
-      this.component = component;
-      this.props = Object.assign({ ikey: key }, extra || {});
-    }
-  }
-  function ctrl(key, component, extra) {
-    return new ODCControl(key, component, extra);
+  function send(payload) {
+    if (window.sketchup && sketchup.nact) sketchup.nact(JSON.stringify(payload));
+    else console.log("NACT", payload);
   }
 
   var BIN_OPS = ["+", "-", "*", "/", "%", "^", "&", "=", "<>", "<", ">",
                  "<=", ">=", "AND", "OR"];
   var UN_OPS = ["-", "+", "NOT"];
 
-  // ---- node template ---------------------------------------------------
-  // Replaces vue-render's default node: title = VALUE (NEAREST, lenx, +),
-  // kind label = type, friendly arg names, "result" badge on the root.
-  var KIND_LABEL = {
-    const: "literal", attr: "attribute", ref: "reference",
-    bin: "operator", un: "operator", call: "function", act: "action",
-    res: "output"
-  };
+  // Friendly input names per function (same table as the Rete editor).
   var ARG_NAMES = {
     IF: ["cond", "then", "else"],
     CHOOSE: ["i"],
@@ -103,166 +68,19 @@
     ANIMATEFAST: ["attr"], ANIMATECUSTOM: ["attr", "duration"]
   };
 
-  function portName(input, node) {
-    var t = node.data.t;
-    if (t === "bin") return input.key;            // a / b
-    if (t === "un") return "x";
+  function argLabel(t, v, key, idx, count) {
+    if (t === "bin" || t === "un") return key;
     if (t === "call" || t === "act") {
-      var idx = parseInt(input.key.slice(3), 10) || 0;
-      var fn = String(node.data.v || "").toUpperCase();
+      var fn = String(v || "").toUpperCase();
       var names = ARG_NAMES[fn];
       if (names && names[idx]) return names[idx];
       if (/^(LARGEST|SMALLEST)$/.test(fn)) {
-        return idx === node.inputs.size - 1 ? "k" : "v" + (idx + 1);
+        return idx === count - 1 ? "k" : "v" + (idx + 1);
       }
-      if (names) return "v" + idx;   // vararg candidates after the fixed head
+      if (names) return "v" + idx;
       return "arg" + (idx + 1);
     }
-    return input.key;
-  }
-
-  var socketDir = {
-    bind: function (el, binding, vnode) {
-      vnode.context.bindSocket(el, binding.arg, binding.value);
-    },
-    update: function (el, binding, vnode) {
-      vnode.context.bindSocket(el, binding.arg, binding.value);
-    }
-  };
-  var controlDir = {
-    bind: function (el, binding, vnode) {
-      if (binding.value) vnode.context.bindControl(el, binding.value);
-    }
-  };
-
-  var ODCNode = {
-    props: ["node", "editor", "bindSocket", "bindControl"],
-    directives: { socket: socketDir, control: controlDir },
-    template:
-      '<div class="node" :class="[selected(), node.data.t]">' +
-        '<div class="ntitle">' +
-          '<span class="nkind">{{kind}}</span>' +
-          '<span class="nname">{{display}}</span>' +
-        '</div>' +
-        '<div class="nbody">' +
-          '<div class="col ins">' +
-            '<div v-for="i in inputs()" :key="i.key" class="port">' +
-              '<div v-socket:input="i" class="sock"></div>' +
-              '<div class="ptitle">{{portLabel(i)}}</div>' +
-              '<input v-if="!i.connections.length" class="manval" type="text" ' +
-                ':value="manualVal(i)" @input="setManual(i, $event)" ' +
-                '@mousedown.stop @dblclick.stop @pointerdown.stop ' +
-                'placeholder="val"/>' +
-            '</div>' +
-          '</div>' +
-          '<div class="col ctrls">' +
-            '<div v-for="c in controls()" :key="c.key" v-control="c" class="control"></div>' +
-          '</div>' +
-          '<div class="col outs">' +
-            '<div v-for="o in outputs()" :key="o.key" class="port out">' +
-              '<div v-socket:output="o" class="sock"></div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>',
-    computed: {
-      kind: function () { return KIND_LABEL[this.node.data.t] || "node"; },
-      display: function () {
-        if (this.node.data.t === "res") return "FORMULA";
-        var v = this.node.data.v;
-        return v == null || v === "" ? "" : String(v);
-      }
-    },
-    methods: {
-      inputs: function () { return Array.from(this.node.inputs.values()); },
-      outputs: function () { return Array.from(this.node.outputs.values()); },
-      controls: function () { return Array.from(this.node.controls.values()); },
-      selected: function () {
-        return this.editor.selected.contains(this.node) ? "selected" : "";
-      },
-      portLabel: function (input) { return portName(input, this.node); },
-      manualVal: function (input) {
-        return ((this.node.data.manual || {})[input.key]) || "";
-      },
-      setManual: function (input, e) {
-        var m = this.node.data.manual || (this.node.data.manual = {});
-        m[input.key] = e.target.value;
-        requestPreview();
-      }
-    }
-  };
-
-  // ---- components -------------------------------------------------------
-  function comp(name, build) {
-    var c = new Rete.Component(name);
-    c.builder = function (node) { build(node); return node; };
-    c.worker = function () {};
-    return c;
-  }
-
-  var components = [
-    comp("attr", function (n) {
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("ref", function (n) {
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("const", function (n) {
-      n.addControl(ctrl("v", TextControl));
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("bin", function (n) {
-      n.addControl(ctrl("v", OpSelect, { ops: BIN_OPS }));
-      n.addInput(new Rete.Input("a", "a", socketVal));
-      n.addInput(new Rete.Input("b", "b", socketVal));
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("un", function (n) {
-      n.addControl(ctrl("v", OpSelect, { ops: UN_OPS }));
-      n.addInput(new Rete.Input("x", "x", socketVal));
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("call", function (n) {
-      var v = n.data.v;
-      var arity = (state.fnArity || {})[v];
-      var count = n.data.argc || arity || 1;
-      for (var i = 0; i < count; i++) {
-        n.addInput(new Rete.Input("arg" + i, "" + i, socketVal));
-      }
-      if (state.fnVararg && state.fnVararg.indexOf(v) >= 0) {
-        n.addControl(ctrl("addarg", AddArgBtn, { node: n }));
-      }
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    comp("act", function (n) {
-      var count = n.data.argc || 2;
-      for (var i = 0; i < count; i++) {
-        n.addInput(new Rete.Input("arg" + i, "" + i, socketVal));
-      }
-      n.addControl(ctrl("addarg", AddArgBtn, { node: n }));
-      n.addOutput(new Rete.Output("out", "value", socketVal));
-    }),
-    // The single FORMULA output node - whatever is wired into it is the
-    // expression's result. Always present, not deletable, single-conn.
-    comp("res", function (n) {
-      n.addInput(new Rete.Input("in", "in", socketVal, false));
-    })
-  ];
-
-  var TYPE2COMP = { const: "const", attr: "attr", ref: "ref",
-                    bin: "bin", un: "un", call: "call", act: "act",
-                    res: "res" };
-
-  // node.name doubles as the CSS class and the title in vue-render, so it
-  // carries the node TYPE (attr/const/call...); the value is shown by the
-  // node's inner control. createNode is async in Rete v1.
-  async function makeNode(type, v, extra) {
-    var node = await components.find(function (c) {
-      return c.name === TYPE2COMP[type];
-    }).createNode(Object.assign({ v: v, manual: {} }, extra || {}));
-    node.data.t = type;
-    node.name = type;
-    return node;
+    return key;
   }
 
   // Manual port values: "abc" -> str abc, 12.5 -> num, bare word -> str.
@@ -280,7 +98,202 @@
     return k === "str" ? '"' + v + '"' : String(v);
   }
 
-  // ---- graph doc <-> rete ------------------------------------------------
+  // ---- theme -------------------------------------------------------------
+  function cssVar(n) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(n).trim();
+  }
+
+  function applyTheme() {
+    LiteGraph.NODE_FONT = "Segoe UI, sans-serif";
+    LiteGraph.DEFAULT_FONT = "Segoe UI, sans-serif";
+    LiteGraph.NODE_TEXT_SIZE = 13;
+    LiteGraph.NODE_WIDTH = 160;
+    LiteGraph.NODE_TITLE_HEIGHT = 26;
+    LiteGraph.NODE_SLOT_HEIGHT = 18;
+    LiteGraph.NODE_TITLE_COLOR = cssVar("--dim");
+    LiteGraph.NODE_SELECTED_TITLE_COLOR = cssVar("--fg");
+    LiteGraph.NODE_TEXT_COLOR = cssVar("--fg");
+    LiteGraph.NODE_TEXT_HIGHLIGHT_COLOR = cssVar("--fg");
+    LiteGraph.NODE_DEFAULT_BGCOLOR = cssVar("--bg3");
+    LiteGraph.NODE_DEFAULT_COLOR = cssVar("--bg2");
+    LiteGraph.NODE_DEFAULT_BOXCOLOR = cssVar("--border");
+    LiteGraph.LINK_COLOR = cssVar("--muted");
+    LiteGraph.CONNECTING_LINK_COLOR = cssVar("--accent2");
+    LiteGraph.WIDGET_BGCOLOR = cssVar("--bg2");
+    LiteGraph.WIDGET_OUTLINE_COLOR = cssVar("--border");
+    LiteGraph.WIDGET_TEXT_COLOR = cssVar("--fg");
+    LiteGraph.WIDGET_SECONDARY_TEXT_COLOR = cssVar("--dim");
+    LiteGraph.WIDGET_DISABLED_TEXT_COLOR = cssVar("--muted");
+    if (canvas) canvas.clear_background_color = cssVar("--bg");
+  }
+
+  // Kind accent as a thin box color - a filled title bar swallows labels.
+  function tint(node, varName) { node.boxcolor = cssVar(varName); }
+
+  // ---- node ---------------------------------------------------------------
+  // One node class; the doc type lives in _odc (t, v, k - same fields the
+  // AstGraph doc serializes).
+  class ODCNode extends LGraphNode {
+    constructor() {
+      super("node");
+      this._odc = {};
+    }
+    getMenuOptions() { return []; }   // litegraph appends Remove itself
+    // litegraph shows Remove/Rename Slot on slot right-click - meaningless
+    // here, so surface a node action instead.
+    getSlotMenuOptions() {
+      if (this._odc.t === "res") {
+        return [{ content: "(FORMULA output is fixed)", disabled: true }];
+      }
+      var n = this;
+      return [{ content: "Remove node",
+        callback: function () { graph.remove(n); } }];
+    }
+    onConnectionsChange() {
+      syncManWidgets(this);
+      requestPreview();
+    }
+  }
+
+  // One companion text widget per input slot - the port's literal value
+  // while nothing is wired into it (same role as Rete's .manval fields).
+  function addIn(n, name, label) {
+    n.addInput(name, 0);
+    var inp = n.inputs[n.inputs.length - 1];
+    if (label) inp.label = label;
+    var w = n.addWidget("text", "", "", function () { requestPreview(); }, {});
+    w._port = name;
+    w.label = label || name;
+    return inp;
+  }
+
+  function syncManWidgets(n) {
+    var changed = false;
+    (n.widgets || []).forEach(function (w) {
+      if (!w._port) return;
+      var inp = (n.inputs || []).find(function (i) { return i.name === w._port; });
+      var h = !!(inp && inp.link != null);
+      if (w.hidden !== h) { w.hidden = h; changed = true; }
+    });
+    if (changed) {
+      n.setSize(n.computeSize());
+      n.setDirtyCanvas(true, true);
+    }
+  }
+
+  function constTitle(n) {
+    var v = n._odc.v;
+    return n._odc.k === "str" ? '"' + v + '"' : String(v);
+  }
+
+  function makeNode(t, v, extra) {
+    var n = new ODCNode();
+    n._odc = { t: t, v: v == null ? "" : v, k: (extra && extra.k) || null };
+    switch (t) {
+      case "const":
+        n._odc.k = (extra && extra.k) || "num";
+        n.title = constTitle(n);
+        n.addWidget("text", "value", String(v == null ? "" : v),
+          function (val) {
+            n._odc.v = val;
+            n.title = constTitle(n);
+            requestPreview();
+          }, {});
+        n.addWidget("combo", "type", n._odc.k, function (val) {
+          n._odc.k = val;
+          n.title = constTitle(n);
+          requestPreview();
+        }, { values: ["num", "str"] });
+        n.addOutput("out", 0);
+        tint(n, "--warn");
+        break;
+      case "attr":
+        n.title = v;
+        n.addOutput("out", 0);
+        tint(n, "--accent");
+        break;
+      case "ref":
+        n.title = v;
+        n.addOutput("out", 0);
+        tint(n, "--accent2");
+        break;
+      case "un":
+        n.title = v;
+        n.addWidget("combo", "op", v, function (val) {
+          n._odc.v = val;
+          n.title = val;
+          requestPreview();
+        }, { values: UN_OPS });
+        addIn(n, "x", "x");
+        n.addOutput("out", 0);
+        break;
+      case "bin":
+        n.title = v;
+        n.addWidget("combo", "op", v, function (val) {
+          n._odc.v = val;
+          n.title = val;
+          requestPreview();
+        }, { values: BIN_OPS });
+        addIn(n, "a", "a");
+        addIn(n, "b", "b");
+        n.addOutput("out", 0);
+        break;
+      case "call": {
+        var arity = (state.fnArity || {})[v];
+        var count = (extra && extra.argc) || arity || 1;
+        n.title = v;
+        for (var i = 0; i < count; i++) {
+          addIn(n, "arg" + i, argLabel(t, v, "arg" + i, i, count));
+        }
+        if (state.fnVararg && state.fnVararg.indexOf(v) >= 0) {
+          n.addWidget("button", "+ arg", null, function () {
+            var idx = n.inputs.length;
+            addIn(n, "arg" + idx,
+              argLabel("call", n._odc.v, "arg" + idx, idx, idx + 1));
+            n.setSize(n.computeSize());
+            n.setDirtyCanvas(true, true);
+            requestPreview();
+          });
+        }
+        n.addOutput("out", 0);
+        tint(n, "--fn");
+        break;
+      }
+      case "act":
+        n.title = v;
+        for (var j = 0; j < ((extra && extra.argc) || 2); j++) {
+          addIn(n, "arg" + j,
+            argLabel("act", v, "arg" + j, j, (extra && extra.argc) || 2));
+        }
+        n.addWidget("button", "+ arg", null, function () {
+          var idx = n.inputs.length;
+          addIn(n, "arg" + idx,
+            argLabel("act", n._odc.v, "arg" + idx, idx, idx + 1));
+          n.setSize(n.computeSize());
+          n.setDirtyCanvas(true, true);
+          requestPreview();
+        });
+        n.addOutput("out", 0);
+        tint(n, "--warn");
+        break;
+      case "res":
+        // The single FORMULA output node - whatever is wired into "in" is
+        // the result. Always present, not deletable.
+        n.title = "FORMULA";
+        addIn(n, "in", "in");
+        n.removable = false;
+        n.clonable = false;
+        n.block_delete = true;
+        tint(n, "--accent2");
+        break;
+      default:
+        n.title = t;
+    }
+    return n;
+  }
+
+  // ---- graph doc <-> litegraph --------------------------------------------
   // depth = longest path from a leaf; leaves left, root right.
   function layoutDepth(doc) {
     var depth = {}, links = doc.links || [];
@@ -290,123 +303,131 @@
       seen[id] = true;
       var ins = links.filter(function (l) { return l.t === id; });
       return depth[id] = ins.length
-        ? 1 + Math.max.apply(null, ins.map(function (l) { return depthOf(l.f, seen); }))
+        ? 1 + Math.max.apply(null, ins.map(function (l) {
+            return depthOf(l.f, seen); }))
         : 0;
     }
-    Object.keys(doc.nodes).forEach(function (id) { depthOf(id, {}); });
+    Object.keys(doc.nodes || {}).forEach(function (id) { depthOf(id, {}); });
     return depth;
   }
 
-  async function buildEditor(doc) {
-    var depth = layoutDepth(doc);
-    var perLevel = {}, idMap = {};
+  function buildEditor(doc) {
+    var nodes = doc.nodes || {}, links = doc.links || [];
+    var depth = layoutDepth(doc), perLevel = {}, idMap = {};
     // A const node feeding exactly one port collapses into that port's
-    // manual-value field. Multi-use consts stay visible (shared value).
+    // manual-value widget. Multi-use consts stay visible (shared value).
     var useCnt = {}, collapsed = {}, manual = {};
-    (doc.links || []).forEach(function (l) {
-      useCnt[l.f] = (useCnt[l.f] || 0) + 1;
-    });
-    (doc.links || []).forEach(function (l) {
-      var src = doc.nodes[l.f];
-      if (src && src.t === "const" && useCnt[l.f] === 1 && doc.nodes[l.t]) {
+    links.forEach(function (l) { useCnt[l.f] = (useCnt[l.f] || 0) + 1; });
+    links.forEach(function (l) {
+      var src = nodes[l.f];
+      if (src && src.t === "const" && useCnt[l.f] === 1 && nodes[l.t]) {
         collapsed[l.f] = true;
         (manual[l.t] = manual[l.t] || {})[l.p] = litDisplay(src.v, src.k);
       }
     });
-    for (var id of Object.keys(doc.nodes)) {
-      if (collapsed[id]) continue;
-      var n = doc.nodes[id];
-      var argc = (n.t === "call" || n.t === "act")
-        ? doc.links.filter(function (l) { return l.t === id; }).length
+    Object.keys(nodes).forEach(function (id) {
+      if (collapsed[id]) return;
+      var nd = nodes[id];
+      var argc = (nd.t === "call" || nd.t === "act")
+        ? links.filter(function (l) { return l.t === id; }).length
         : undefined;
-      var node = await makeNode(n.t, n.v, { k: n.k, argc: argc });
-      node.data.manual = manual[id] || {};
+      var n = makeNode(nd.t, nd.v, { k: nd.k, argc: argc });
+      var man = manual[id] || {};
+      (n.widgets || []).forEach(function (w) {
+        if (w._port && man[w._port] != null) w.value = man[w._port];
+      });
       var lv = depth[id] || 0;
       perLevel[lv] = (perLevel[lv] || 0) + 1;
-      node.position = [60 + lv * 190, 40 + (perLevel[lv] - 1) * 110];
-      editor.addNode(node);
-      idMap[id] = node;
-    }
-    doc.links.forEach(function (l) {
+      n.pos = [60 + lv * 220, 40 + (perLevel[lv] - 1) * 110];
+      graph.add(n);
+      idMap[id] = n;
+    });
+    links.forEach(function (l) {
       if (collapsed[l.f]) return;
-      var src = idMap[l.f], dst = idMap[l.t];
-      if (src && dst) editor.connect(src.outputs.get("out"), dst.inputs.get(l.p));
+      var s = idMap[l.f], d = idMap[l.t];
+      if (!s || !d) return;
+      var ii = d.inputs.findIndex(function (i) { return i.name === l.p; });
+      if (ii >= 0) s.connect(0, d, ii);
     });
     // FORMULA output node: always present, docked right of the doc root
     // (or top-left on an empty graph) and wired to it.
-    var resNode = await makeNode("res", null);
-    var rootNode = doc.root ? idMap[doc.root] : null;
-    if (rootNode) {
-      resNode.position = [rootNode.position[0] + 190, rootNode.position[1]];
+    var res = makeNode("res", null);
+    var rn = doc.root ? idMap[doc.root] : null;
+    if (rn) {
+      res.pos = [rn.pos[0] + 250, rn.pos[1]];
     } else {
       var lvMax = Object.keys(depth).reduce(function (m, id) {
         return Math.max(m, depth[id]);
       }, -1);
-      resNode.position = [60 + (lvMax + 1) * 190, 40];
+      res.pos = [60 + (lvMax + 1) * 220, 40];
     }
-    editor.addNode(resNode);
-    if (rootNode) editor.connect(rootNode.outputs.get("out"), resNode.inputs.get("in"));
+    graph.add(res);
+    if (rn) rn.connect(0, res, 0);
+    (graph._nodes || []).forEach(syncManWidgets);
   }
 
+  function resNode() {
+    return graph && (graph._nodes || []).find(function (n) {
+      return n._odc && n._odc.t === "res";
+    });
+  }
+
+  // Serialize the canvas back to the AstGraph doc schema. The FORMULA
+  // node is stripped; the node feeding it becomes the emitted root.
   function graphDoc() {
-    var d = editor.toJSON();
-    // The FORMULA node is UI-only: it is stripped from the doc and the
-    // node wired into its input becomes the emitted root.
-    var resNode = editor.nodes.find(function (n) { return n.data.t === "res"; });
-    var resId = resNode ? String(resNode.id) : null;
     var nodes = {}, links = [], root = null;
-    Object.keys(d.nodes).forEach(function (id) {
-      if (resId && String(id) === resId) return;
-      var n = d.nodes[id];
-      var t = n.data.t === "act" ? "call" : (n.data.t || n.name);
-      nodes[id] = { t: t, v: n.data.v, k: n.data.k };
-      Object.keys(n.outputs).forEach(function (ok) {
-        (n.outputs[ok].connections || []).forEach(function (c) {
-          if (resId && String(c.node) === resId) {
-            root = id;           // this node's output feeds FORMULA
-          } else {
-            links.push({ f: id, t: String(c.node), p: c.input });
-          }
-        });
+    var res = resNode();
+    (graph._nodes || []).forEach(function (n) {
+      if (!n._odc || n._odc.t === "res") return;
+      var id = String(n.id);
+      nodes[id] = { t: n._odc.t === "act" ? "call" : n._odc.t,
+                    v: n._odc.v, k: n._odc.k };
+      (n.inputs || []).forEach(function (inp) {
+        if (inp.link == null) return;
+        var L = graph.getLink(inp.link);
+        if (L) links.push({ f: String(L.origin_id), t: id, p: inp.name });
       });
     });
+    if (res && res.inputs[0] && res.inputs[0].link != null) {
+      var rl = graph.getLink(res.inputs[0].link);
+      if (rl) root = String(rl.origin_id);
+    }
     // Typed port values become a synthesized const node + link, keeping
     // the doc schema and the Ruby emitter unchanged. A value typed into
     // the FORMULA input itself is a literal result (e.g. `42`).
-    editor.nodes.forEach(function (n) {
-      var man = n.data.manual || {};
-      Object.keys(man).forEach(function (pk) {
-        var inp = n.inputs.get(pk);
-        if (!inp || inp.connections.length) return;
-        var raw = String(man[pk]).trim();
+    (graph._nodes || []).forEach(function (n) {
+      if (!n._odc) return;
+      (n.widgets || []).forEach(function (w) {
+        if (!w._port) return;
+        var inp = (n.inputs || []).find(function (i) {
+          return i.name === w._port;
+        });
+        if (!inp || inp.link != null) return;
+        var raw = String(w.value || "").trim();
         if (!raw) return;
         var lit = parseLit(raw);
-        var mid = "m" + n.id + "_" + pk;
+        var mid = "m" + n.id + "_" + w._port;
         nodes[mid] = { t: "const", v: lit.v, k: lit.k };
-        if (resNode && String(n.id) === resId) {
+        if (n._odc.t === "res") {
           if (!root) root = mid;
         } else {
-          links.push({ f: mid, t: String(n.id), p: pk });
+          links.push({ f: mid, t: String(n.id), p: w._port });
         }
       });
     });
     return { nodes: nodes, links: links, root: root };
   }
 
-  // ---- preview / apply ---------------------------------------------------
-  function send(payload) {
-    sketchup.nact(JSON.stringify(payload));
-  }
-
+  // ---- preview / apply -----------------------------------------------------
   function requestPreview() {
-    if (!state) return;
+    if (!state || building) return;
     clearTimeout(previewTimer);
     previewTimer = setTimeout(function () {
       // Nothing wired into FORMULA -> there is no result to emit.
       var res = resNode();
-      var wired = res && res.inputs.get("in") &&
-                  res.inputs.get("in").connections.length;
-      var man = res && String((res.data.manual || {})["in"] || "").trim();
+      var wired = res && res.inputs[0] && res.inputs[0].link != null;
+      var w = res && (res.widgets || []).find(function (x) { return x._port; });
+      var man = w && String(w.value || "").trim();
       if (res && !wired && !man) {
         window.onNodeStatus({ ok: false,
           errors: ["connect an expression to FORMULA"] });
@@ -433,126 +454,112 @@
     }
   };
 
-  // ---- context menu --------------------------------------------------------
-  // The plugin calls item.onClick(args) and ignores the return value —
-  // the callback itself must add the built node to the editor.
+  // ---- context menu ----------------------------------------------------------
   function addItem(type, v, extra) {
-    return function () {
-      return makeNode(type, v, extra).then(function (n) {
-        editor.addNode(n);
+    return {
+      content: String(v === "" ? "(empty text)" : v),
+      callback: function () {
+        var n = makeNode(type, v, extra);
+        var m = canvas.graph_mouse || [80, 80];
+        n.pos = [m[0] - 40, m[1] - 20];
+        graph.add(n);
+        syncManWidgets(n);
         requestPreview();
-      }).catch(function (err) {
-        toast("add failed: " + err.message, true);
-      });
+      }
     };
   }
+
   function menuItems() {
-    var items = { Operators: {} };
-    ["+", "-", "*", "/", "%", "^", "&", "=", "<>", "<", ">", "<=", ">=",
-     "AND", "OR"].forEach(function (op) {
-      items.Operators[op] = addItem("bin", op);
-    });
-    items.Operators["unary -"] = addItem("un", "-");
-    items.Operators["NOT"] = addItem("un", "NOT");
-    items.Literals = {
-      Number: addItem("const", "0", { k: "num" }),
-      Text: addItem("const", "", { k: "str" })
-    };
-    items.Attributes = {};
-    (state.attrs || []).concat(state.builtins || []).forEach(function (a) {
-      items.Attributes[a] = addItem("attr", a);
-    });
-    (state.globals || []).forEach(function (g) {
-      items.Attributes["global!" + g] = addItem("ref", "global!" + g);
-    });
-    items.Functions = {};
-    (state.functions || []).forEach(function (f) {
-      items.Functions[f] = addItem("call", f);
-    });
+    function sub(name, opts) {
+      return { content: name, has_submenu: true, submenu: { options: opts } };
+    }
+    var ops = BIN_OPS.map(function (op) { return addItem("bin", op); });
+    ops.push({ content: "unary -", callback: addItem("un", "-").callback },
+             { content: "NOT", callback: addItem("un", "NOT").callback });
+    var items = [
+      sub("Operators", ops),
+      sub("Literals", [
+        { content: "Number", callback: addItem("const", "0", { k: "num" }).callback },
+        { content: "Text", callback: addItem("const", "", { k: "str" }).callback }
+      ]),
+      sub("Attributes",
+        (state.attrs || []).concat(state.builtins || [])
+          .map(function (a) { return addItem("attr", a); })
+          .concat((state.globals || []).map(function (g) {
+            return addItem("ref", "global!" + g);
+          }))),
+      sub("Functions",
+        (state.functions || []).map(function (f) { return addItem("call", f); }))
+    ];
     if (state.isAction) {
-      items.Actions = {};
-      (state.actions || []).forEach(function (f) {
-        items.Actions[f] = addItem("act", f);
-      });
+      items.push(sub("Actions",
+        (state.actions || []).map(function (f) { return addItem("act", f); })));
     }
     return items;
   }
 
-  // ---- boot ---------------------------------------------------------------
+  // ---- canvas ---------------------------------------------------------------
+  function ensureCanvas() {
+    if (canvas) return;
+    var el = document.getElementById("lgcanvas");
+    canvas = new lg.LGraphCanvas(el, new lg.LGraph());
+    canvas.clear_background = true;
+    canvas.clear_background_color = cssVar("--bg");
+    canvas.allow_searchbox = false;
+    canvas.render_canvas_border = false;
+    // Centre arrow markers use _centreAngle (verified forward); the
+    // render_connection_arrows chevrons read backwards, so leave them off.
+    canvas.render_connection_arrows = false;
+    canvas.linkMarkerShape = lg.LinkMarkerShape.Arrow;
+    canvas.getCanvasMenuOptions = function () { return menuItems(); };
+    // FORMULA is the fixed result node - everything else is deletable.
+    canvas.deleteSelected = function () {
+      var sel = this.selected_nodes || {};
+      Object.keys(sel).forEach(function (id) {
+        var n = sel[id];
+        if (n._odc && n._odc.t === "res") return;
+        graph.remove(n);
+      });
+      this.setDirty(true, true);
+      requestPreview();
+    };
+    window.addEventListener("resize", function () { canvas.resize(); });
+    // resize() reads the parent box in CSS px - correct once dpr is 1.
+    requestAnimationFrame(function () { canvas.resize(); });
+  }
+
+  // ---- boot --------------------------------------------------------------------
   window.renderNodes = function (payload) {
     state = payload;
     document.getElementById("ptitle").textContent = payload.label || payload.name;
+    applyTheme();
+    ensureCanvas();
 
-    var container = document.getElementById("rete");
-    container.innerHTML = "";
-    editor = new Rete.NodeEditor("odc@0.1.0", container);
-    editor.use(ConnectionPlugin.default);
-    editor.use(VueRenderPlugin.default, { component: ODCNode });
-    editor.use(ContextMenuPlugin.default, {
-      items: menuItems(),
-      // default allocate returns [] per component which still registers a
-      // bare menu item - return null so only our categorized items show
-      allocate: function () { return null; },
-      // default 1s submenu hide delay leaves overlapping submenus open
-      delay: 120
-    });
-    components.forEach(function (c) { editor.register(c); });
-    window.__dbg = { editor: editor, comps: components };
-
-    buildEditor(payload.graph || { nodes: {}, links: [] }).then(function () {
-      editor.view.resize();
-      editor.trigger("process");
-      requestPreview();
-    }).catch(function (e) {
+    building = true;
+    graph = new lg.LGraph();
+    graph.onNodeAdded = function () { requestPreview(); };
+    graph.onNodeRemoved = function () { requestPreview(); };
+    canvas.setGraph(graph);
+    try {
+      buildEditor(payload.graph || { nodes: {}, links: [] });
+    } catch (e) {
       send({ op: "dbg", err: String(e && e.message || e),
              stack: String(e && e.stack || "").slice(0, 400) });
       toast("graph build failed: " + (e && e.message || e), true);
-    });
-
-    editor.on("connectioncreated connectionremoved noderemoved nodecreated", function () {
-      // re-render ports so manual fields hide/show on (dis)connect
-      editor.nodes.forEach(function (n) { if (n.update) n.update(); });
-      requestPreview();
-    });
-
-    // Blue-highlight connections into/out of the selected node(s).
-    function markSelectedConns() {
-      var sel = editor.selected.list;
-      editor.view.connections.forEach(function (cv) {
-        var c = cv.connection;
-        var lit = sel.some(function (n) {
-          return c.input.node === n || c.output.node === n;
-        });
-        if (cv.el) cv.el.classList.toggle("lit", lit);
-      });
     }
-    editor.on("nodeselected", markSelectedConns);
-    editor.on("connectioncreated connectionremoved", markSelectedConns);
-
+    building = false;
     requestPreview();
   };
-
-  // The FORMULA output node can't be deleted or recreated - it is the
-  // fixed result. The result switches by simply rewiring its input.
-  function resNode() {
-    return editor && editor.nodes.find(function (n) { return n.data.t === "res"; });
-  }
 
   document.getElementById("napply").addEventListener("click", function () {
     if (state) send({ op: "apply", entityId: state.entityId, name: state.name,
                       doc: graphDoc() });
   });
 
-  document.addEventListener("keydown", function (ev) {
-    if ((ev.key === "Delete" || ev.key === "Backspace") && editor &&
-        editor.selected.list.length) {
-      editor.selected.list.slice().forEach(function (n) {
-        if (n.data.t !== "res") editor.removeNode(n);  // FORMULA is fixed
-      });
-      editor.selected.clear();
-      requestPreview();
-    }
-  });
+  // Debug/dev hook (same role as the dep-graph __odc).
+  window.__dbg = function () {
+    return { canvas: canvas, graph: graph, doc: graphDoc };
+  };
 
   if (window.sketchup && sketchup.nready) sketchup.nready("");
 })();

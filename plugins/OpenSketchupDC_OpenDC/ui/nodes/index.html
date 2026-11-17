@@ -7,6 +7,7 @@
   <meta charset="utf-8">
   <title>Open DC - Node Editor</title>
   <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../vendor/litegraph.css">
   <style>
     :root {
       color-scheme: dark;
@@ -15,7 +16,6 @@
       --accent: #4f9cf9; --accent2: #7fd0a2;
       --warn: #e69664; --error: #e66565; --border: #2a2b31;
       --fn: #b9a5f0;
-      --node-shadow: rgba(0,0,0,.35); --menu-shadow: rgba(0,0,0,.55);
     }
     :root[data-theme="light"] {
       color-scheme: light;
@@ -24,7 +24,6 @@
       --accent: #0d6dd8; --accent2: #157a47;
       --warn: #a05c10; --error: #c4323b; --border: #d3d6dc;
       --fn: #7a5cd0;
-      --node-shadow: rgba(0,0,0,.14); --menu-shadow: rgba(0,0,0,.22);
     }
     html, body { height: 100%; margin: 0; overflow: hidden;
       background: var(--bg); color: var(--fg);
@@ -49,126 +48,7 @@
       padding: 3px 12px; cursor: pointer; font-size: 11px;
     }
     #napply:disabled { opacity: .4; cursor: default; }
-    #rete { position: absolute; inset: 38px 0 0 0; }
-
-    /* ---- node theme (custom ODCNode template) ---- */
-    .node {
-      position: relative; background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 6px; min-width: 96px;
-      box-shadow: 0 2px 8px var(--node-shadow);
-      font-family: ui-monospace, Consolas, monospace;
-    }
-    .node.selected { border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px var(--node-shadow); }
-    /* FORMULA output node - the graph's single fixed result */
-    .node.res { border-color: var(--accent2); }
-    .node.res .ntitle { background: rgba(127,208,162,.10); }
-    .node.res .nname { color: var(--accent2); }
-    .ntitle {
-      display: flex; justify-content: space-between; align-items: baseline;
-      gap: 8px; padding: 3px 7px; border-bottom: 1px solid var(--border);
-      border-radius: 6px 6px 0 0; background: rgba(79,156,249,.07);
-    }
-    .node.const .ntitle { background: rgba(230,150,100,.07); }
-    .node.call  .ntitle { background: rgba(185,165,240,.07); }
-    .node.ref   .ntitle { background: rgba(127,208,162,.07); }
-    .nkind { font-size: 8.5px; letter-spacing: .06em; text-transform: uppercase;
-      color: var(--muted); }
-    .nname { font-size: 11px; font-weight: 600; color: var(--fg); }
-    .node.attr  .nname { color: var(--accent); }
-    .node.call  .nname { color: var(--fn); }
-    .node.const .nname { color: var(--warn); }
-    .node.ref   .nname { color: var(--accent2); }
-    .node.act   .nname { color: var(--warn); }
-    .nbody { display: flex; padding: 2px 0; }
-    .col { display: flex; flex-direction: column; }
-    .col.ins  { align-items: flex-start; }
-    .col.ctrls { flex: 1; align-items: center; justify-content: center; }
-    .col.outs { align-items: flex-end; margin-left: auto; }
-    .port { display: flex; align-items: center; gap: 4px; }
-    .ptitle { font-size: 9px; color: var(--muted); padding-right: 2px; }
-    .manval {
-      width: 52px; margin-left: 3px; padding: 1px 4px; font-size: 9.5px;
-      font-family: inherit; color: var(--fg);
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 3px; outline: none;
-    }
-    .manval:focus { border-color: var(--accent); }
-    .manval::placeholder { color: var(--muted); opacity: .55; }
-    .sock {
-      width: 11px; height: 11px; border-radius: 6px; margin: 2px;
-      background: var(--bg); border: 2px solid var(--muted); cursor: pointer;
-    }
-    .sock:hover, .sock.used { border-color: var(--accent2);
-      background: var(--accent2); }
-    .control { padding: 1px 6px; }
-    .node input[type=text] {
-      width: 58px; background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 1px 4px;
-      font: 10px ui-monospace, Consolas, monospace;
-    }
-    .node .nops {
-      background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 0 3px;
-      font: 10px ui-monospace, Consolas, monospace;
-    }
-    .node .addarg {
-      background: none; border: 1px dashed var(--border); color: var(--muted);
-      border-radius: 4px; font-size: 9px; padding: 0 6px; cursor: pointer;
-    }
-    .node .addarg:hover { color: var(--accent); border-color: var(--accent); }
-    #rete .connection path { stroke: var(--muted); stroke-width: 1.5;
-      fill: none; }
-    #rete .connection .main-path { stroke: var(--muted); stroke-width: 1.5; }
-    #rete .lit .main-path { stroke: var(--accent); stroke-width: 2;
-      opacity: 1; }
-    /* plugin injects scoped [data-v] styles (blue theme) - #rete out-specifies */
-    #rete .context-menu {
-      background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
-      margin: 0; box-shadow: 0 8px 20px var(--menu-shadow); z-index: 30;
-      font-family: ui-monospace, Consolas, monospace;
-      overflow: visible;
-    }
-    #rete .context-menu .item {
-      color: var(--fg); background: transparent; border: 0;
-      padding: 3px 12px; font-size: 10px; cursor: pointer;
-      font-family: inherit; width: auto; position: relative;
-    }
-    #rete .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
-    #rete .context-menu .search {
-      color: var(--fg); background: transparent; border: 0;
-      border-bottom: 1px solid var(--border); padding: 4px; width: auto;
-    }
-    #rete .context-menu .search input {
-      background: var(--bg2); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 4px; padding: 3px 7px;
-      width: 100%; box-sizing: border-box;
-      font: 10px ui-monospace, Consolas, monospace; outline: none;
-    }
-    #rete .context-menu .search input:focus { border-color: var(--accent); }
-    #rete .context-menu .subitems {
-      background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 7px; box-shadow: 0 8px 20px var(--menu-shadow);
-      padding: 3px 0; min-width: 150px;
-      max-height: min(340px, calc(100vh - 80px));
-      overflow-y: auto; overflow-x: hidden;
-    }
-    /* the plugin keeps sibling submenus open on a debounce - force single-
-       open instead: hide every submenu except the hovered item's own */
-    #rete .context-menu .item .subitems { display: none !important; }
-    #rete .context-menu .item:hover > .subitems { display: block !important; }
-    /* slim dark scrollbars inside menus */
-    #rete .context-menu .subitems::-webkit-scrollbar { width: 8px; }
-    #rete .context-menu .subitems::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    #rete .context-menu .subitems::-webkit-scrollbar-thumb {
-      background: var(--border); border-radius: 4px;
-    }
-    #rete .context-menu .subitems::-webkit-scrollbar-thumb:hover {
-      background: var(--muted);
-    }
+    #lgcanvas { position: absolute; inset: 38px 0 0 0; }
     #ntoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
       background: var(--bg3); border: 1px solid var(--border);
@@ -186,30 +66,9 @@
     <button id="napply" disabled
       title="Write the node graph back as the attribute's formula">Apply</button>
   </header>
-  <div id="rete"></div>
+  <canvas id="lgcanvas"></canvas>
   <div id="ntoast"></div>
-  <script src="../vendor/vue.min.js"></script>
-  <script src="../vendor/rete.min.js"></script>
-  <script src="../vendor/connection-plugin.min.js"></script>
-  <script src="../vendor/vue-render-plugin.min.js"></script>
-  <script>
-    // Minimal lodash stub — context-menu-plugin UMD expects window._
-    // and only uses debounce()/isFunction().
-    window._ = window._ || {
-      debounce: function (fn, wait) {
-        var t = null;
-        function d() {
-          var self = this, args = arguments;
-          if (t) clearTimeout(t);
-          t = setTimeout(function () { t = null; fn.apply(self, args); }, wait);
-        }
-        d.cancel = function () { if (t) { clearTimeout(t); t = null; } };
-        return d;
-      },
-      isFunction: function (v) { return typeof v === 'function'; }
-    };
-  </script>
-  <script src="../vendor/context-menu-plugin.min.js"></script>
+  <script src="../vendor/litegraph.umd.js"></script>
   <script src="nodes.js"></script>
 </body>
 </html>

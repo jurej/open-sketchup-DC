@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!-- Dev harness for the litegraph node editor: stubs the sketchup bridge
+     and mirrors AstGraph.to_formula so preview docs can be asserted as
+     formula strings without SketchUp. Not used by the extension. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>nodes harness</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../vendor/litegraph.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #17181c; --bg2: #1e1f24; --bg3: #23242b;
+      --fg: #d8d8de; --dim: #a9a9b2; --muted: #8a8a93;
+      --accent: #4f9cf9; --accent2: #7fd0a2;
+      --warn: #e69664; --error: #e66565; --border: #2a2b31;
+      --fn: #b9a5f0;
+    }
+    html, body { height: 100%; margin: 0; overflow: hidden;
+      background: var(--bg); color: var(--fg);
+      font: 11.5px/1.45 "Segoe UI", sans-serif; }
+    header { display: flex; align-items: center; gap: 10px;
+      padding: 7px 12px; border-bottom: 1px solid var(--border); }
+    #ptitle { font-weight: 600; color: var(--accent); }
+    #nformula { flex: 1; font: 11px ui-monospace, Consolas, monospace;
+      color: var(--dim); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; border: 1px solid var(--border);
+      border-radius: 5px; padding: 3px 7px; background: var(--bg2); }
+    #nformula.bad { border-color: var(--error); color: var(--error); }
+    #napply { background: var(--bg3); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 5px;
+      padding: 3px 12px; cursor: pointer; font-size: 11px; }
+    #napply:disabled { opacity: .4; cursor: default; }
+    #lgcanvas { position: absolute; inset: 38px 0 0 0; }
+    #ntoast { position: fixed; bottom: 12px; left: 50%;
+      transform: translateX(-50%); background: var(--bg3);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 11px; font-size: 11px; opacity: 0; z-index: 40;
+      pointer-events: none; }
+    #ntoast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <header>
+    <span id="ptitle">Node Editor</span>
+    <span id="nformula"></span>
+    <button id="napply" disabled>Apply</button>
+  </header>
+  <canvas id="lgcanvas"></canvas>
+  <div id="ntoast"></div>
+  <script src="../vendor/litegraph.umd.js"></script>
+  <script>
+  // ---- mock Ruby bridge ----------------------------------------------------
+  // Mirrors AstGraph.to_formula (plugins/.../core/ast_graph.rb) so harness
+  // assertions exercise the same emission rules Ruby applies.
+  var PRECEDENCE = {
+    "OR": 1, "AND": 2, "=": 3, "<>": 3, "<": 3, ">": 3, "<=": 3, ">=": 3,
+    "&": 4, "+": 5, "-": 5, "*": 6, "/": 6, "%": 6, "^": 6 };
+  var UN_PREC = 7, PRIMARY_PREC = 8;
+  var NON_ASSOC_RIGHT = ["-","/","%","^","=","<>","<",">","<=",">="];
+  var FN_ARITY = { IF: 3, ROUND: 1, MIN: 1, MAX: 1, PI: 0, CHOOSE: 2 };
+
+  function emitPort(nodes, inMap, id, port) {
+    var src = inMap[id + "|" + port];
+    if (src == null) throw new Error("unconnected input " + port + " on " + id);
+    return emitNode(src, nodes, inMap);
+  }
+  function emitNode(id, nodes, inMap) {
+    var n = nodes[id];
+    if (!n) throw new Error("unknown node " + id);
+    switch (n.t) {
+      case "const":
+        return [n.k === "str" ? '"' + String(n.v).replace(/"/g, "") + '"'
+                             : String(n.v), PRIMARY_PREC];
+      case "attr": case "ref": return [String(n.v), PRIMARY_PREC];
+      case "un": {
+        var x = emitPort(nodes, inMap, id, "x");
+        var inner = x[1] < UN_PREC ? "(" + x[0] + ")" : x[0];
+        var op = String(n.v);
+        return [op === "NOT" ? "NOT " + inner : op + inner, UN_PREC];
+      }
+      case "bin": {
+        var op2 = String(n.v);
+        var pr = PRECEDENCE[op2];
+        if (pr == null) throw new Error("unknown operator " + op2);
+        var l = emitPort(nodes, inMap, id, "a");
+        var r = emitPort(nodes, inMap, id, "b");
+        var lt = l[1] < pr ? "(" + l[0] + ")" : l[0];
+        var rt = (NON_ASSOC_RIGHT.indexOf(op2) >= 0 ? r[1] <= pr : r[1] < pr)
+          ? "(" + r[0] + ")" : r[0];
+        var to = (op2 === "AND" || op2 === "OR") ? " " + op2 + " " : op2;
+        return [lt + to + rt, pr];
+      }
+      case "call": {
+        var args = Object.keys(inMap)
+          .filter(function (k) { var kv = k.split("|");
+            return kv[0] === id && kv[1].indexOf("arg") === 0; })
+          .sort(function (x, y) {
+            return +x.split("|")[1].slice(3) - +y.split("|")[1].slice(3); });
+        var fn = String(n.v);
+        if (!args.length && (FN_ARITY[fn.toUpperCase()] || 1) > 0)
+          throw new Error(fn + " has no arguments");
+        var texts = args.map(function (k) {
+          return emitNode(inMap[k], nodes, inMap)[0]; });
+        return [fn + "(" + texts.join(",") + ")", PRIMARY_PREC];
+      }
+      default: throw new Error("unknown node type " + n.t);
+    }
+  }
+  function toFormula(doc) {
+    var nodes = doc.nodes || {}, links = doc.links || [];
+    var inMap = {}, fed = {};
+    links.forEach(function (l) {
+      inMap[l.t + "|" + String(l.p)] = l.f;
+      fed[l.f] = true;
+    });
+    var root = doc.root;
+    if (root == null) {
+      root = Object.keys(nodes).find(function (k) { return !fed[k]; });
+    }
+    if (root == null) throw new Error("empty graph");
+    return emitNode(String(root), nodes, inMap)[0];
+  }
+
+  window.__ops = [];
+  window.sketchup = {
+    nready: function () {},
+    nact: function (json) {
+      var p = JSON.parse(json);
+      window.__ops.push(p);
+      window.__lastDoc = p.doc;
+      if (p.op === "preview" || p.op === "apply") {
+        try {
+          var f = toFormula(p.doc || {});
+          window.__lastFormula = f;
+          window.onNodeStatus({ ok: true, formula: f,
+            applied: p.op === "apply" });
+        } catch (e) {
+          window.__lastFormula = null;
+          window.onNodeStatus({ ok: false, errors: [String(e.message)] });
+        }
+      }
+    }
+  };
+  </script>
+  <script src="nodes.js"></script>
+  <script>
+  // Fixture: entity "Box :: price" - IF formula exercises call slots,
+  // const->port collapse, friendly arg labels, and a bin op.
+  window.renderNodes({
+    entityId: "e1", name: "price", label: "Box :: price",
+    formula: "=IF(lenx>10,1,0)",
+    graph: {"nodes":{"n3":{"t":"attr","v":"lenx"},"n4":{"t":"const","k":"num","v":"10.0"},"n2":{"t":"bin","v":">"},"n5":{"t":"const","k":"num","v":"1.0"},"n6":{"t":"const","k":"num","v":"0.0"},"n1":{"t":"call","v":"IF"}},"links":[{"f":"n3","t":"n2","p":"a"},{"f":"n4","t":"n2","p":"b"},{"f":"n2","t":"n1","p":"arg0"},{"f":"n5","t":"n1","p":"arg1"},{"f":"n6","t":"n1","p":"arg2"}],"root":"n1"},
+    attrs: ["lenx", "leny", "lenz", "price", "area"],
+    builtins: ["x", "y", "z", "rotX"],
+    globals: ["rate"],
+    functions: ["IF", "ROUND", "MIN", "MAX", "PI", "CHOOSE"],
+    actions: ["SET", "ANIMATE"],
+    fnArity: { IF: 3, ROUND: 1, MIN: 1, MAX: 1, PI: 0, CHOOSE: 2 },
+    fnVararg: ["MIN", "MAX", "ROUND", "CHOOSE", "AND", "OR"],
+    isAction: false
+  });
+  </script>
+</body>
+</html>
