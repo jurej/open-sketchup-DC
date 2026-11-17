@@ -29,14 +29,26 @@
     } catch (e) { /* older CEF - rendering stays correct at any rate */ }
   }
 
-  var LiteGraph = lg.LiteGraph, LGraphNode = lg.LGraphNode;
+  var LiteGraph = lg.LiteGraph;
 
   var canvas = null;      // LGraphCanvas
   var graph = null;       // the single editable LGraph
-  var state = null;       // {entityId,name,label,functions,actions,attrs,builtins,globals,fnArity,fnVararg,isAction}
+  var state = null;       // {entityId,name,label,functions,actions,attrs,builtins,globals,fnArity,fnVararg,fnGroups,isAction}
   var building = false;   // suppress preview while rebuilding
   var toastTimer = null;
   var previewTimer = null;
+
+  // Shared AST node layer (ui/astkit.js) - node classes, widgets, manual
+  // port fields, doc helpers. Hooks wire it to this page's preview/theme.
+  var kit = window.ODCAst.createNodes(lg, {
+    tint: function (n, v) { n.boxcolor = cssVar(v); },
+    preview: function () { requestPreview(); },
+    fnArity: function () { return (state || {}).fnArity; },
+    fnVararg: function () { return (state || {}).fnVararg; }
+  });
+  var makeNode = kit.makeNode, syncManWidgets = kit.syncManWidgets,
+      parseLit = window.ODCAst.parseLit, litDisplay = window.ODCAst.litDisplay,
+      layoutDepth = window.ODCAst.layoutDepth, BIN_OPS = window.ODCAst.BIN_OPS;
 
   function toast(msg, isErr) {
     var el = document.getElementById("ntoast");
@@ -49,53 +61,6 @@
   function send(payload) {
     if (window.sketchup && sketchup.nact) sketchup.nact(JSON.stringify(payload));
     else console.log("NACT", payload);
-  }
-
-  var BIN_OPS = ["+", "-", "*", "/", "%", "^", "&", "=", "<>", "<", ">",
-                 "<=", ">=", "AND", "OR"];
-  var UN_OPS = ["-", "+", "NOT"];
-
-  // Friendly input names per function (same table as the Rete editor).
-  var ARG_NAMES = {
-    IF: ["cond", "then", "else"],
-    CHOOSE: ["i"],
-    CURRENT: ["attr"],
-    OPTIONINDEX: ["attr"],
-    OPTIONVALUE: ["attr", "label"],
-    ROUND: ["x", "ndigits"],
-    NEAREST: ["x"],
-    SET: ["attr"], ANIMATE: ["attr"], ANIMATESLOW: ["attr"],
-    ANIMATEFAST: ["attr"], ANIMATECUSTOM: ["attr", "duration"]
-  };
-
-  function argLabel(t, v, key, idx, count) {
-    if (t === "bin" || t === "un") return key;
-    if (t === "call" || t === "act") {
-      var fn = String(v || "").toUpperCase();
-      var names = ARG_NAMES[fn];
-      if (names && names[idx]) return names[idx];
-      if (/^(LARGEST|SMALLEST)$/.test(fn)) {
-        return idx === count - 1 ? "k" : "v" + (idx + 1);
-      }
-      if (names) return "v" + idx;
-      return "arg" + (idx + 1);
-    }
-    return key;
-  }
-
-  // Manual port values: "abc" -> str abc, 12.5 -> num, bare word -> str.
-  function parseLit(raw) {
-    var s = String(raw).trim();
-    if (s.length > 1 && s[0] === '"' && s[s.length - 1] === '"')
-      return { v: s.slice(1, -1), k: "str" };
-    if (/^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s))
-      return { v: s, k: "num" };
-    return { v: s, k: "str" };
-  }
-  // Display form for a const value collapsed into a port field:
-  // strings stay quoted so the type round-trips unambiguously.
-  function litDisplay(v, k) {
-    return k === "str" ? '"' + v + '"' : String(v);
   }
 
   // ---- theme -------------------------------------------------------------
@@ -128,192 +93,10 @@
     if (canvas) canvas.clear_background_color = cssVar("--bg");
   }
 
-  // Kind accent as a thin box color - a filled title bar swallows labels.
-  function tint(node, varName) { node.boxcolor = cssVar(varName); }
-
-  // ---- node ---------------------------------------------------------------
-  // One node class; the doc type lives in _odc (t, v, k - same fields the
-  // AstGraph doc serializes).
-  class ODCNode extends LGraphNode {
-    constructor() {
-      super("node");
-      this._odc = {};
-    }
-    getMenuOptions() { return []; }   // litegraph appends Remove itself
-    // litegraph shows Remove/Rename Slot on slot right-click - meaningless
-    // here, so surface a node action instead.
-    getSlotMenuOptions() {
-      if (this._odc.t === "res") {
-        return [{ content: "(FORMULA output is fixed)", disabled: true }];
-      }
-      var n = this;
-      return [{ content: "Remove node",
-        callback: function () { graph.remove(n); } }];
-    }
-    onConnectionsChange() {
-      syncManWidgets(this);
-      requestPreview();
-    }
-  }
-
-  // One companion text widget per input slot - the port's literal value
-  // while nothing is wired into it (same role as Rete's .manval fields).
-  function addIn(n, name, label) {
-    n.addInput(name, 0);
-    var inp = n.inputs[n.inputs.length - 1];
-    if (label) inp.label = label;
-    var w = n.addWidget("text", "", "", function () { requestPreview(); }, {});
-    w._port = name;
-    w.label = label || name;
-    return inp;
-  }
-
-  function syncManWidgets(n) {
-    var changed = false;
-    (n.widgets || []).forEach(function (w) {
-      if (!w._port) return;
-      var inp = (n.inputs || []).find(function (i) { return i.name === w._port; });
-      var h = !!(inp && inp.link != null);
-      if (w.hidden !== h) { w.hidden = h; changed = true; }
-    });
-    if (changed) {
-      n.setSize(n.computeSize());
-      n.setDirtyCanvas(true, true);
-    }
-  }
-
-  function constTitle(n) {
-    var v = n._odc.v;
-    return n._odc.k === "str" ? '"' + v + '"' : String(v);
-  }
-
-  function makeNode(t, v, extra) {
-    var n = new ODCNode();
-    n._odc = { t: t, v: v == null ? "" : v, k: (extra && extra.k) || null };
-    switch (t) {
-      case "const":
-        n._odc.k = (extra && extra.k) || "num";
-        n.title = constTitle(n);
-        n.addWidget("text", "value", String(v == null ? "" : v),
-          function (val) {
-            n._odc.v = val;
-            n.title = constTitle(n);
-            requestPreview();
-          }, {});
-        n.addWidget("combo", "type", n._odc.k, function (val) {
-          n._odc.k = val;
-          n.title = constTitle(n);
-          requestPreview();
-        }, { values: ["num", "str"] });
-        n.addOutput("out", 0);
-        tint(n, "--warn");
-        break;
-      case "attr":
-        n.title = v;
-        n.addOutput("out", 0);
-        tint(n, "--accent");
-        break;
-      case "ref":
-        n.title = v;
-        n.addOutput("out", 0);
-        tint(n, "--accent2");
-        break;
-      case "un":
-        n.title = v;
-        n.addWidget("combo", "op", v, function (val) {
-          n._odc.v = val;
-          n.title = val;
-          requestPreview();
-        }, { values: UN_OPS });
-        addIn(n, "x", "x");
-        n.addOutput("out", 0);
-        break;
-      case "bin":
-        n.title = v;
-        n.addWidget("combo", "op", v, function (val) {
-          n._odc.v = val;
-          n.title = val;
-          requestPreview();
-        }, { values: BIN_OPS });
-        addIn(n, "a", "a");
-        addIn(n, "b", "b");
-        n.addOutput("out", 0);
-        break;
-      case "call": {
-        var arity = (state.fnArity || {})[v];
-        var count = (extra && extra.argc) || arity || 1;
-        n.title = v;
-        for (var i = 0; i < count; i++) {
-          addIn(n, "arg" + i, argLabel(t, v, "arg" + i, i, count));
-        }
-        if (state.fnVararg && state.fnVararg.indexOf(v) >= 0) {
-          n.addWidget("button", "+ arg", null, function () {
-            var idx = n.inputs.length;
-            addIn(n, "arg" + idx,
-              argLabel("call", n._odc.v, "arg" + idx, idx, idx + 1));
-            n.setSize(n.computeSize());
-            n.setDirtyCanvas(true, true);
-            requestPreview();
-          });
-        }
-        n.addOutput("out", 0);
-        tint(n, "--fn");
-        break;
-      }
-      case "act":
-        n.title = v;
-        for (var j = 0; j < ((extra && extra.argc) || 2); j++) {
-          addIn(n, "arg" + j,
-            argLabel("act", v, "arg" + j, j, (extra && extra.argc) || 2));
-        }
-        n.addWidget("button", "+ arg", null, function () {
-          var idx = n.inputs.length;
-          addIn(n, "arg" + idx,
-            argLabel("act", n._odc.v, "arg" + idx, idx, idx + 1));
-          n.setSize(n.computeSize());
-          n.setDirtyCanvas(true, true);
-          requestPreview();
-        });
-        n.addOutput("out", 0);
-        tint(n, "--warn");
-        break;
-      case "res":
-        // The single FORMULA output node - whatever is wired into "in" is
-        // the result. Always present, not deletable.
-        n.title = "FORMULA";
-        addIn(n, "in", "in");
-        n.removable = false;
-        n.clonable = false;
-        n.block_delete = true;
-        tint(n, "--accent2");
-        break;
-      default:
-        n.title = t;
-    }
-    return n;
-  }
-
   // ---- graph doc <-> litegraph --------------------------------------------
-  // depth = longest path from a leaf; leaves left, root right.
-  function layoutDepth(doc) {
-    var depth = {}, links = doc.links || [];
-    function depthOf(id, seen) {
-      if (depth[id] != null) return depth[id];
-      if (seen[id]) return 0;
-      seen[id] = true;
-      var ins = links.filter(function (l) { return l.t === id; });
-      return depth[id] = ins.length
-        ? 1 + Math.max.apply(null, ins.map(function (l) {
-            return depthOf(l.f, seen); }))
-        : 0;
-    }
-    Object.keys(doc.nodes || {}).forEach(function (id) { depthOf(id, {}); });
-    return depth;
-  }
-
   function buildEditor(doc) {
     var nodes = doc.nodes || {}, links = doc.links || [];
-    var depth = layoutDepth(doc), perLevel = {}, idMap = {};
+    var depth = layoutDepth(nodes, links), perLevel = {}, idMap = {};
     // A const node feeding exactly one port collapses into that port's
     // manual-value widget. Multi-use consts stay visible (shared value).
     var useCnt = {}, collapsed = {}, manual = {};

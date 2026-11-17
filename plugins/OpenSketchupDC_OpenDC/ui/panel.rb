@@ -716,11 +716,7 @@ module OpenSketchupDC
       def cmd_graph(eid)
         with_entity(eid) do |ent|
           @graph_eid = eid
-          @graph_pending = {
-            "label" => entity_label(ent),
-            "entityId" => eid,
-            "graph" => entity_graph(read_graph_set(ent, eid))
-          }
+          @graph_pending = build_graph_pending(ent, eid)
           if @graph_dialog.nil?
             @graph_dialog = ::UI::HtmlDialog.new(
               dialog_title: "Open DC - Dependency Graph",
@@ -765,6 +761,7 @@ module OpenSketchupDC
         case data["op"].to_s
         when "openNodes" then return cmd_nodes(data)
         when "addParam"  then return graph_add_param(data)
+        when "previewDoc", "applyDoc" then return graph_apply_doc(data)
         end
 
         ent = entity(data["entityId"].to_s)
@@ -786,14 +783,84 @@ module OpenSketchupDC
         end
         reevaluate(ent, dict_name)
         push_state
-        @graph_pending = {
-          "label" => entity_label(ent),
-          "entityId" => data["entityId"].to_s,
-          "graph" => entity_graph(read_graph_set(ent, data["entityId"].to_s))
-        }
+        @graph_pending = build_graph_pending(ent, data["entityId"].to_s)
         push_graph
       rescue StandardError => e
         push_error(e.message)
+      end
+
+      # Pending payload for the graph window: the dependency graph plus
+      # the catalogs the formula subgraphs need for in-canvas editing
+      # (same fields cmd_nodes pushes to the fx editor).
+      def build_graph_pending(ent, eid)
+        ps = read_graph_set(ent, eid)
+        {
+          "label" => entity_label(ent),
+          "entityId" => eid,
+          "graph" => entity_graph(ps),
+          "palette" => {
+            "attrs" => ps.names,
+            "builtins" => DCReader::BUILTIN_ATTRS,
+            "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
+            "functions" => Expression::FUNCTIONS,
+            "actions" => Expression::Evaluator::ACTIONS,
+            "fnArity" => AstGraph::FN_ARITY,
+            "fnVararg" => AstGraph::FN_VARARG,
+            "fnGroups" => AstGraph::FN_GROUPS
+          }
+        }
+      end
+
+      # In-subgraph formula edits: the JS serializes the subgraph back to
+      # an AstGraph doc. previewDoc emits + validates only; applyDoc also
+      # writes through the normal validated/undo/reevaluate path.
+      def graph_apply_doc(data)
+        name = data["name"].to_s
+        ent = entity(data["entityId"].to_s)
+        if ent.nil?
+          return push_graph_status("ok" => false, "name" => name,
+                                   "errors" => ["entity unavailable"])
+        end
+
+        formula =
+          begin
+            AstGraph.to_formula(data["doc"] || {})
+          rescue StandardError => e
+            return push_graph_status("ok" => false, "name" => name,
+                                     "errors" => [e.message])
+          end
+
+        v = validate_formula(ent, formula, name)
+        unless v["ok"]
+          return push_graph_status("ok" => false, "name" => name,
+                                   "errors" => v["errors"])
+        end
+
+        unless data["op"].to_s == "applyDoc"
+          return push_graph_status("ok" => true, "name" => name,
+                                   "formula" => formula)
+        end
+
+        write_graph_formula(ent, data["entityId"].to_s, name, formula,
+                            "Open DC: Graph formula #{name}")
+        push_graph_status("ok" => true, "name" => name, "formula" => formula,
+                          "applied" => true)
+      rescue StandardError => e
+        push_graph_status("ok" => false, "name" => data["name"].to_s,
+                          "errors" => [e.message])
+      end
+
+      # Shared write path for graph-driven formula edits: validated write
+      # inside undo, reevaluate, then refresh panel + graph window.
+      def write_graph_formula(ent, eid, name, formula, undo_label)
+        dict_name = DCReader.dict_name_for(ent)
+        Helpers.undo_wrap(Sketchup.active_model, undo_label) do
+          DCWriter.set_meta(ent, name, "formula", formula, dict_name: dict_name)
+        end
+        reevaluate(ent, dict_name)
+        push_state
+        @graph_pending = build_graph_pending(ent, eid)
+        push_graph
       end
 
       def push_graph
@@ -839,11 +906,7 @@ module OpenSketchupDC
         reevaluate(ent, dict_name)
         push_state
         push_graph_status("msg" => "Added '#{name}'")
-        @graph_pending = {
-          "label" => entity_label(ent),
-          "entityId" => data["entityId"].to_s,
-          "graph" => entity_graph(read_graph_set(ent, data["entityId"].to_s))
-        }
+        @graph_pending = build_graph_pending(ent, data["entityId"].to_s)
         push_graph
       rescue StandardError => e
         push_graph_status("error" => e.message)
@@ -1079,11 +1142,7 @@ module OpenSketchupDC
 
         eid = register(target)
         @graph_eid = eid
-        @graph_pending = {
-          "label" => entity_label(target),
-          "entityId" => eid,
-          "graph" => entity_graph(read_graph_set(target, eid))
-        }
+        @graph_pending = build_graph_pending(target, eid)
         push_graph
       rescue StandardError => e
         puts "#{PLUGIN_NAME}: graph refresh failed - #{e.message}"

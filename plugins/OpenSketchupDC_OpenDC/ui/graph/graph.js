@@ -37,12 +37,22 @@
 
   var canvas = null;      // LGraphCanvas
   var rootGraph = null;   // top-level LGraph
-  var cur = null;         // latest payload {label, entityId, graph}
+  var cur = null;         // latest payload {label, entityId, graph, palette}
   var lastEntityId = null;// entity of the last rendered graph
   var building = false;   // suppress edit ops while rebuilding the canvas
   var savedView = null;   // pan/zoom kept across re-renders
   var toastTimer = null;
   var confirmCb = null;
+  var previewTimer = null;
+
+  // Shared AST node layer (ui/astkit.js) - same widgets/manual port
+  // fields/doc helpers as the fx editor, hooked to the subgraph preview.
+  var kit = window.ODCAst.createNodes(lg, {
+    tint: function (n, v) { n.boxcolor = cssVar(v); },
+    preview: function () { requestSubPreview(); },
+    fnArity: function () { return ((cur || {}).palette || {}).fnArity; },
+    fnVararg: function () { return ((cur || {}).palette || {}).fnVararg; }
+  });
 
   function toast(msg, isErr) {
     var el = document.getElementById("gtoast");
@@ -194,8 +204,10 @@
     else if (ev.key === "Escape") hideNewAttr();
   });
 
-  // Async feedback for ops without a graph re-push (mostly errors).
+  // Async feedback for ops without a graph re-push: {error|msg} toasts;
+  // {ok,formula|errors,applied} updates the subgraph preview/apply bar.
   window.onGraphStatus = function (r) {
+    if (r.ok !== undefined) return setSubStatus(r);
     if (r.error) toast(r.error, true);
     else if (r.msg) toast(r.msg);
   };
@@ -294,58 +306,16 @@
   }
 
   // ---- inner (AST) nodes ----------------------------------------------
+  // Editable: same kit nodes/widgets as the fx editor. _odc marks them
+  // (IO docks lack it) so canvas delete/menus can tell them apart.
   function makeInner(nd, argc) {
-    var n = new ODCNode();
-    n._odc = { kind: nd.t };
-    switch (nd.t) {
-      case "const":
-        n.title = nd.k === "str" ? '"' + nd.v + '"' : String(nd.v);
-        n.addOutput("out", 0);
-        tint(n, "--fn");
-        break;
-      case "un":
-        n.title = nd.v;
-        n.addInput("x", 0);
-        n.addOutput("out", 0);
-        break;
-      case "bin":
-        n.title = nd.v;
-        n.addInput("a", 0);
-        n.addInput("b", 0);
-        n.addOutput("out", 0);
-        break;
-      case "call":
-      case "act":
-        n.title = nd.v;
-        for (var i = 0; i < argc; i++) n.addInput("arg" + i, 0);
-        n.addOutput("out", 0);
-        break;
-      default:
-        n.title = nd.t;
-    }
-    return n;
-  }
-
-  // depth = longest path from a leaf; leaves left, root right.
-  function layoutDepth(nodes, links) {
-    var depth = {};
-    function depthOf(id, seen) {
-      if (depth[id] != null) return depth[id];
-      if (seen[id]) return 0;
-      seen[id] = true;
-      var ins = links.filter(function (l) { return l.t === id; });
-      return depth[id] = ins.length
-        ? 1 + Math.max.apply(null, ins.map(function (l) {
-            return depthOf(l.f, seen); }))
-        : 0;
-    }
-    Object.keys(nodes).forEach(function (id) { depthOf(id, {}); });
-    return depth;
+    return kit.makeNode(nd.t, nd.v, { k: nd.k, argc: argc });
   }
 
   // Inside a subgraph, attr/ref leaves don't become nodes: the subgraph's
   // named input slots represent them (one slot per referenced name,
-  // deduped), wired straight into the consuming ports.
+  // deduped), wired straight into the consuming ports. Single-use const
+  // leaves collapse into port manual widgets (same rule as the fx editor).
   function buildSub(sub, doc) {
     var nodes = doc.nodes || {}, links = doc.links || [];
     var leaf = {}; // doc node id -> referenced attr name
@@ -353,13 +323,27 @@
       var t = nodes[id].t;
       if (t === "attr" || t === "ref") leaf[id] = nodes[id].v;
     });
+    var useCnt = {}, collapsed = {}, manual = {};
+    links.forEach(function (l) { useCnt[l.f] = (useCnt[l.f] || 0) + 1; });
+    links.forEach(function (l) {
+      var src = nodes[l.f];
+      if (src && src.t === "const" && useCnt[l.f] === 1 && nodes[l.t]) {
+        collapsed[l.f] = true;
+        (manual[l.t] = manual[l.t] || {})[l.p] =
+          window.ODCAst.litDisplay(src.v, src.k);
+      }
+    });
     var argc = {};
     links.forEach(function (l) { argc[l.t] = (argc[l.t] || 0) + 1; });
-    var depth = layoutDepth(nodes, links);
+    var depth = window.ODCAst.layoutDepth(nodes, links);
     var perLvl = {}, idMap = {};
     Object.keys(nodes).forEach(function (id) {
-      if (leaf[id]) return;
+      if (leaf[id] || collapsed[id]) return;
       var n = makeInner(nodes[id], argc[id] || 0);
+      var man = manual[id] || {};
+      (n.widgets || []).forEach(function (w) {
+        if (w._port && man[w._port] != null) w.value = man[w._port];
+      });
       var lv = depth[id] || 0;
       perLvl[lv] = (perLvl[lv] || 0) + 1;
       n.pos = [160 + lv * 230, 140 + (perLvl[lv] - 1) * 110];
@@ -367,6 +351,7 @@
       idMap[id] = n;
     });
     links.forEach(function (l) {
+      if (collapsed[l.f]) return;
       var dst = idMap[l.t];
       if (!dst) return;
       var inIdx = dst.inputs.findIndex(function (i) {
@@ -396,12 +381,191 @@
     sub.outputNode.pos = [maxX + 180, 60];
     sub.inputNode.arrange();
     sub.outputNode.arrange();
-    // View-only inside a formula: user-drawn links don't persist.
-    sub.events.addEventListener("link-created", function (ev) {
+    (sub._nodes || []).forEach(kit.syncManWidgets);
+    // Editable formula canvas: link/node changes feed the live preview.
+    sub.onNodeAdded = function () { requestSubPreview(); };
+    sub.onNodeRemoved = function () { requestSubPreview(); };
+    sub.events.addEventListener("link-created", function () {
       if (building) return;
-      try { sub.removeLink(ev.detail.id); } catch (e) { /* gone */ }
-      toast("Formula graphs are view-only here - edit via fx", true);
+      requestSubPreview();
     });
+  }
+
+  // Serialize a formula subgraph back to the AstGraph doc schema. Input
+  // dock slots become attr/ref leaf nodes (deduped by name); the node
+  // feeding the output dock is the root; unwired ports with a typed
+  // value emit synthesized const nodes - same rules as the fx editor.
+  function subDoc(sub) {
+    var nodes = {}, links = [], root = null;
+    var inId = sub.inputNode.id, outId = sub.outputNode.id;
+    var leafOf = {};
+    function leafId(name) {
+      if (!leafOf[name]) {
+        leafOf[name] = "in_" + name;
+        nodes[leafOf[name]] = { t: name.indexOf("!") >= 0 ? "ref" : "attr",
+                                v: name, k: null };
+      }
+      return leafOf[name];
+    }
+    (sub._nodes || []).forEach(function (n) {
+      if (!n._odc) return;
+      nodes[String(n.id)] = { t: n._odc.t === "act" ? "call" : n._odc.t,
+                              v: n._odc.v, k: n._odc.k };
+    });
+    (sub._links ? Array.from(sub._links.values()) : []).forEach(function (l) {
+      var tgt, pname;
+      if (l.target_id === outId) {
+        root = l.origin_id === inId
+          ? leafId(sub.inputs[l.origin_slot].name)
+          : String(l.origin_id);
+      } else if (l.origin_id === inId) {
+        var nm = sub.inputs[l.origin_slot] && sub.inputs[l.origin_slot].name;
+        tgt = sub.getNodeById(l.target_id);
+        pname = tgt && tgt.inputs[l.target_slot] &&
+                tgt.inputs[l.target_slot].name;
+        if (nm && pname) {
+          links.push({ f: leafId(nm), t: String(l.target_id), p: pname });
+        }
+      } else {
+        tgt = sub.getNodeById(l.target_id);
+        pname = tgt && tgt.inputs[l.target_slot] &&
+                tgt.inputs[l.target_slot].name;
+        if (pname) {
+          links.push({ f: String(l.origin_id), t: String(l.target_id),
+                       p: pname });
+        }
+      }
+    });
+    (sub._nodes || []).forEach(function (n) {
+      if (!n._odc) return;
+      (n.widgets || []).forEach(function (w) {
+        if (!w._port) return;
+        var inp = (n.inputs || []).find(function (i) {
+          return i.name === w._port;
+        });
+        if (!inp || inp.link != null) return;
+        var raw = String(w.value || "").trim();
+        if (!raw) return;
+        var lit = window.ODCAst.parseLit(raw);
+        var mid = "m" + n.id + "_" + w._port;
+        nodes[mid] = { t: "const", v: lit.v, k: lit.k };
+        links.push({ f: mid, t: String(n.id), p: w._port });
+      });
+    });
+    return { nodes: nodes, links: links, root: root };
+  }
+
+  // ---- subgraph editing: preview + apply ----------------------------------
+  function setSubStatus(r) {
+    var el = document.getElementById("gsubformula");
+    var apply = document.getElementById("gsubapply");
+    if (r.ok) {
+      el.textContent = r.formula;
+      el.classList.remove("bad");
+      apply.disabled = false;
+      if (r.applied) toast("Applied: " + r.formula);
+    } else {
+      el.textContent = r.errors ? r.errors.join("; ") : "invalid";
+      el.classList.add("bad");
+      apply.disabled = true;
+    }
+  }
+
+  function requestSubPreview() {
+    var sub = canvas && canvas.subgraph;
+    if (!sub || building) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function () {
+      var s2 = canvas.subgraph;
+      if (!s2) return;
+      var doc = subDoc(s2);
+      if (!doc.root) {
+        setSubStatus({ ok: false,
+          errors: ["connect an expression to FORMULA"] });
+        return;
+      }
+      send({ op: "previewDoc", entityId: cur.entityId, name: s2.name,
+             doc: doc });
+    }, 250);
+  }
+
+  // Node palette inside a formula subgraph - same categories as the fx
+  // editor. Sources: cur.palette pushed by Ruby; attrs fall back to the
+  // top-level node ids when absent.
+  function subMenuItems(sub) {
+    var pal = cur.palette || {};
+    var attrs = pal.attrs || (cur.graph.nodes || [])
+      .filter(function (n) { return !n.external && !n.virtual; })
+      .map(function (n) { return n.id; });
+    function sub2(name, opts) {
+      return { content: name, has_submenu: true, submenu: { options: opts } };
+    }
+    function addItem(type, v, extra) {
+      return {
+        content: String(v === "" ? "(empty text)" : v),
+        callback: function () {
+          var n = kit.makeNode(type, v, extra);
+          var m = canvas.graph_mouse || [160, 140];
+          n.pos = [m[0] - 40, m[1] - 20];
+          sub.add(n);
+          kit.syncManWidgets(n);
+          requestSubPreview();
+        }
+      };
+    }
+    var ops = window.ODCAst.BIN_OPS.map(function (op) {
+      return addItem("bin", op);
+    });
+    ops.push({ content: "unary -", callback: addItem("un", "-").callback },
+             { content: "NOT", callback: addItem("un", "NOT").callback });
+    var attrSubs = [];
+    if (attrs.length) {
+      attrSubs.push(sub2("Custom",
+        attrs.map(function (a) { return addItem("attr", a); })));
+    }
+    if ((pal.builtins || []).length) {
+      attrSubs.push(sub2("SketchUp",
+        pal.builtins.map(function (a) { return addItem("attr", a); })));
+    }
+    if ((pal.globals || []).length) {
+      attrSubs.push(sub2("Globals", pal.globals.map(function (g) {
+        return addItem("ref", "global!" + g);
+      })));
+    }
+    var fns = pal.functions || [];
+    var grouped = {};
+    var fnSubs = (pal.fnGroups || []).map(function (pair) {
+      var names = fns.filter(function (f) {
+        if (pair[1].indexOf(f) < 0) return false;
+        grouped[f] = true;
+        return true;
+      });
+      return names.length
+        ? sub2(pair[0], names.map(function (f) { return addItem("call", f); }))
+        : null;
+    }).filter(Boolean);
+    var rest = fns.filter(function (f) { return !grouped[f]; });
+    if (rest.length) {
+      fnSubs.push(sub2("Other",
+        rest.map(function (f) { return addItem("call", f); })));
+    }
+    var items = [
+      sub2("Operators", ops),
+      sub2("Literals", [
+        { content: "Number",
+          callback: addItem("const", "0", { k: "num" }).callback },
+        { content: "Text",
+          callback: addItem("const", "", { k: "str" }).callback }
+      ]),
+      sub2("Attributes", attrSubs),
+      sub2("Functions", fnSubs)
+    ];
+    if (String(sub.name || "").toLowerCase() === "onclick"
+        && (pal.actions || []).length) {
+      items.push(sub2("Actions",
+        pal.actions.map(function (f) { return addItem("act", f); })));
+    }
+    return items;
   }
 
   // ---- subgraphs --------------------------------------------------------
@@ -514,8 +678,14 @@
   // ---- canvas wiring ------------------------------------------------------
   function linkMenu(segment, e) {
     if (canvas.subgraph) {
+      var sub = canvas.subgraph;
       new LiteGraph.ContextMenu(
-        ["(view only - edit via fx)"], { event: e });
+        [{ content: "Remove link",
+           callback: function () {
+             sub.removeLink(segment.id);
+             requestSubPreview();
+           } },
+         null, "Cancel"], { event: e, callback: function () {} });
       return false;
     }
     var d = (segment && segment.data) || {};
@@ -555,8 +725,22 @@
     var sub = canvas && canvas.subgraph;
     document.getElementById("gback").style.display = sub ? "" : "none";
     document.getElementById("gcrumb").textContent =
-      sub ? ("\u2039 " + sub.name) : "";
+      sub ? ("‹ " + sub.name) : "";
+    document.getElementById("gsubbar").style.display = sub ? "flex" : "none";
+    if (sub) {
+      var el = document.getElementById("gsubformula");
+      el.textContent = "";
+      el.classList.remove("bad");
+      document.getElementById("gsubapply").disabled = true;
+      requestSubPreview();
+    }
   }
+
+  document.getElementById("gsubapply").addEventListener("click", function () {
+    var sub = canvas && canvas.subgraph;
+    if (sub) send({ op: "applyDoc", entityId: cur.entityId, name: sub.name,
+                    doc: subDoc(sub) });
+  });
 
   document.getElementById("gback").addEventListener("click", function () {
     canvas.subgraph = null;
@@ -580,16 +764,14 @@
     canvas.linkMarkerShape = lg.LinkMarkerShape.Arrow;
     canvas.getCanvasMenuOptions = function () {
       if (canvas.subgraph) {
-        return [
-          { content: "Back to dependencies",
-            callback: function () {
-              canvas.subgraph = null;
-              canvas.setGraph(rootGraph);
-              updateCrumbs();
-            } },
-          { content: "(formula graph is view-only - edit via fx)",
-            disabled: true }
-        ];
+        var items = subMenuItems(canvas.subgraph);
+        items.push(null, { content: "Back to dependencies",
+          callback: function () {
+            canvas.subgraph = null;
+            canvas.setGraph(rootGraph);
+            updateCrumbs();
+          } });
+        return items;
       }
       return [{ content: "New attribute",
         callback: function () { openNewAttr(); } }];
@@ -603,6 +785,16 @@
       if (n._odc) openFx(n._odc.name);
     };
     canvas.deleteSelected = function () {
+      if (canvas.subgraph) {
+        var sel = this.selected_nodes || {};
+        Object.keys(sel).forEach(function (id) {
+          var n = sel[id];
+          if (n._odc) canvas.subgraph.remove(n);   // docks have no _odc
+        });
+        this.setDirty(true, true);
+        requestSubPreview();
+        return;
+      }
       toast("Nodes are data-owned - use fx or the panel to edit");
     };
     el.addEventListener("subgraph-opened", updateCrumbs);
@@ -648,7 +840,8 @@
 
   // Debug/dev hook (same role as __dbg in the nodes editor).
   window.__odc = function () {
-    return { canvas: canvas, root: rootGraph,
+    return { canvas: canvas, root: rootGraph, kit: kit,
+             subDoc: subDoc, payload: function () { return cur; },
              current: canvas && canvas.graph };
   };
 

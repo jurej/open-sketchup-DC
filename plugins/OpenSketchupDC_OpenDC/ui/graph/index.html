@@ -45,8 +45,26 @@
     }
     #gback:hover { border-color: var(--accent); }
     #gcrumb { color: var(--dim); font-size: 11px;
-      font-family: ui-monospace, Consolas, monospace; }
+      font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
     .hint { font-size: 10px; color: var(--muted); }
+    /* formula preview + apply bar, visible only inside a subgraph */
+    #gsubbar {
+      display: none; align-items: center; gap: 8px; flex: 1; min-width: 0;
+      margin-left: 8px;
+    }
+    #gsubformula {
+      flex: 1; min-width: 0; font: 10.5px ui-monospace, Consolas, monospace;
+      color: var(--dim); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; border: 1px solid var(--border); border-radius: 5px;
+      padding: 3px 7px; background: var(--bg2);
+    }
+    #gsubformula.bad { border-color: var(--error); color: var(--error); }
+    #gsubapply {
+      background: var(--bg3); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 5px;
+      padding: 3px 12px; cursor: pointer; font-size: 11px;
+    }
+    #gsubapply:disabled { opacity: .4; cursor: default; }
     #gadd {
       margin-left: auto; background: var(--bg3); color: var(--accent);
       border: 1px solid var(--accent); border-radius: 5px;
@@ -107,6 +125,11 @@
     <button id="gback" title="Back to the dependency graph">&larr; back</button>
     <span id="gtitle">Dependency Graph</span>
     <span id="gcrumb"></span>
+    <span id="gsubbar">
+      <span id="gsubformula" title="Live formula preview from the Ruby validator"></span>
+      <button id="gsubapply" disabled
+        title="Write the formula graph back as the attribute's formula">Apply</button>
+    </span>
     <span class="hint">drag output &rarr; input to wire &middot; click link for
       options &middot; double-click a formula node to dive in &middot;
       right-click for actions</span>
@@ -132,6 +155,7 @@
     </div>
   </div></div>
   <script src="../vendor/litegraph.umd.js"></script>
+  <script src="../astkit.js"></script>
   <script src="graph.js"></script>
 </body>
 </html>

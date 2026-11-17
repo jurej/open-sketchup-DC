@@ -33,8 +33,20 @@
     }
     #gback:hover { border-color: var(--accent); }
     #gcrumb { color: var(--dim); font-size: 11px;
-      font-family: ui-monospace, Consolas, monospace; }
+      font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
     .hint { font-size: 10px; color: var(--muted); }
+    #gsubbar { display: none; align-items: center; gap: 8px; flex: 1;
+      min-width: 0; margin-left: 8px; }
+    #gsubformula { flex: 1; min-width: 0;
+      font: 10.5px ui-monospace, Consolas, monospace; color: var(--dim);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 3px 7px; background: var(--bg2); }
+    #gsubformula.bad { border-color: var(--error); color: var(--error); }
+    #gsubapply { background: var(--bg3); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 5px;
+      padding: 3px 12px; cursor: pointer; font-size: 11px; }
+    #gsubapply:disabled { opacity: .4; cursor: default; }
     #gadd {
       margin-left: auto; background: var(--bg3); color: var(--accent);
       border: 1px solid var(--accent); border-radius: 5px;
@@ -77,6 +89,10 @@
     <button id="gback">&larr; back</button>
     <span id="gtitle">Dependency Graph</span>
     <span id="gcrumb"></span>
+    <span id="gsubbar">
+      <span id="gsubformula"></span>
+      <button id="gsubapply" disabled>Apply</button>
+    </span>
     <span class="hint">dev harness - mock payload</span>
     <button id="gadd">+ attr</button>
   </header>
@@ -99,12 +115,32 @@
     </div>
   </div></div>
   <script src="../vendor/litegraph.umd.js"></script>
+  <script src="../astkit.js"></script>
+  <script src="../dev-emit.js"></script>
   <script src="graph.js"></script>
   <script>
     // Stub the sketchup bridge, then feed a representative payload.
+    // previewDoc/applyDoc run the dev-emit mirror like the real Ruby path.
+    window.__ops = [];
     window.sketchup = {
       gready: function () {},
-      gact: function (j) { console.log("GACT", JSON.parse(j)); }
+      gact: function (j) {
+        var p = JSON.parse(j);
+        window.__ops.push(p);
+        console.log("GACT", p.op || p);
+        if (p.op === "previewDoc" || p.op === "applyDoc") {
+          try {
+            var f = window.ODCDocEmit.toFormula(p.doc || {});
+            window.__lastSubFormula = f;
+            window.onGraphStatus({ ok: true, name: p.name, formula: f,
+              applied: p.op === "applyDoc" });
+          } catch (e) {
+            window.__lastSubFormula = null;
+            window.onGraphStatus({ ok: false, name: p.name,
+              errors: [String(e.message)] });
+          }
+        }
+      }
     };
 
     function constDoc(v) {
@@ -176,6 +212,22 @@
           { from: "area",   to: "price",  literal: "0.2" },
           { from: "parent!rate", to: "price", literal: "0" },
           { from: "volume", to: "desc",   literal: "0.162" }
+        ]
+      },
+      palette: {
+        attrs: ["width","depth","height","thick","area","volume","price","desc"],
+        builtins: ["x","y","z","rotX","rotY","rotZ"],
+        globals: ["rate","tax"],
+        functions: ["IF","ROUND","MIN","MAX","PI","CONCATENATE","CHOOSE"],
+        actions: ["SET","ANIMATE","REDRAW"],
+        fnArity: { IF: 3, ROUND: 1, MIN: 1, MAX: 1, PI: 0,
+                   CONCATENATE: 1, CHOOSE: 2 },
+        fnVararg: ["MIN","MAX","ROUND","CHOOSE","CONCATENATE"],
+        fnGroups: [
+          ["Logical", ["IF","AND","OR","NOT","TRUE","FALSE"]],
+          ["Math", ["MIN","MAX","ROUND","PI"]],
+          ["Text", ["CONCATENATE"]],
+          ["SketchUp", ["CHOOSE","CURRENT","OPTIONINDEX"]]
         ]
       }
     };
