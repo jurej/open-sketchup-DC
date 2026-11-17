@@ -1,22 +1,4 @@
-# Open DC — share/post text
-
-Short version (friends, chat):
-
-> I've been building **Open DC** — a modern, open-source replacement for
-> SketchUp's aging Dynamic Components extension. It keeps full
-> compatibility with classic DCs, but adds a proper parameter panel, a
-> real formula language with a node-graph editor, a dependency graph you
-> can rewire, and a new engine that can do things Trimble's can't — like
-> driving native SketchUp properties (name, layer/tag…) and other
-> plugins' attribute dictionaries straight from formulas. It's beta 1,
-> AGPL, and I'd love feedback:
-> https://github.com/jurej/open-sketchup-DC
-
----
-
-Longer version (forum post):
-
-## Open DC — a modern Dynamic Components replacement (beta 1)
+# Open DC — a modern Dynamic Components replacement (beta 1)
 
 Dynamic Components are one of SketchUp's most powerful ideas stuck in
 one of its oldest UIs. Open DC is my attempt at a modern take: it reads
