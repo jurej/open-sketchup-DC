@@ -36,6 +36,15 @@ module OpenSketchupDC
         end
       end
 
+      # Collection-level spy covering every dynamic entity, selected or
+      # not - EntitySpy only sees selection targets, so moving an
+      # unselected node would never dirty its dependents.
+      class EntitiesSpy < Sketchup::EntitiesObserver
+        def onElementModified(_entities, entity)
+          Panel.on_any_change(entity)
+        end
+      end
+
       # A Selection observer only lives as long as the Selection it was
       # attached to - a new/opened model gets a fresh Selection and the spy
       # on the old one goes silent. AppObserver re-wires on model changes.
@@ -60,9 +69,11 @@ module OpenSketchupDC
 
       @selection_spy = nil
       @entity_spy = nil
+      @entities_spy = nil
       @app_spy = nil
       @selection_model = nil
       @watched = []
+      @watched_cols = {}
       @dict_owners = {}
       @entity_targets = {}
 
@@ -71,8 +82,10 @@ module OpenSketchupDC
       def install(model)
         @entity_spy ||= EntitySpy.new
         @selection_spy ||= SelectionSpy.new
+        @entities_spy ||= EntitiesSpy.new
         ensure_selection_spy(model)
         watch_current(model)
+        watch_model_entities(model)
         Sketchup.add_observer(@app_spy ||= AppSpy.new)
       end
 
@@ -94,8 +107,29 @@ module OpenSketchupDC
       end
 
       def on_model_change(model)
+        @watched_cols = {}
         install(model)
         Panel.schedule_push
+      end
+
+      # Attach the collection spy to model.entities and every definition's
+      # entities. Idempotent per collection; re-run on selection changes
+      # so definitions created after install get watched too.
+      def watch_model_entities(model)
+        return if model.nil? || @entities_spy.nil?
+
+        cols = [model.entities]
+        model.definitions.each { |d| cols << d.entities }
+        cols.each do |c|
+          next if @watched_cols[c.object_id]
+
+          begin
+            c.add_observer(@entities_spy)
+            @watched_cols[c.object_id] = true
+          rescue StandardError
+            nil
+          end
+        end
       end
 
       # Re-attach the entity spy to the currently selected targets, their
@@ -116,6 +150,7 @@ module OpenSketchupDC
           attach(t, t)
           attach(t, t.definition) if t.is_a?(Sketchup::ComponentInstance)
         end
+        watch_model_entities(model)
       end
 
       def attach(target, holder)

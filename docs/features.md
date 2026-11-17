@@ -123,6 +123,15 @@ unlinks back to a literal, and double-clicking a node dives into that
 component's own dependency graph. Positions and group boxes persist per
 session, same as the per-entity graph.
 
+Both graph windows share canvas chrome: a floating toolbar (Pan/Select
+tools — drag pans or box-selects, Space/middle-drag always pans),
+zoom/Fit buttons, snap-to-grid with alignment guides, a link-style
+cycle, a find box (Enter jumps between matches), and a minimap with
+click-to-pan. Selecting nodes floats a toolbox over them offering
+collapse/expand, align and distribute, fold into a subgraph, a group
+box around the selection, and remove. Ctrl+Shift-drag zooms into a
+region; selections survive re-renders.
+
 ## onClick actions
 
 `onClick` is a first-class row (with `copies`, `copy`, `scaletool`) —

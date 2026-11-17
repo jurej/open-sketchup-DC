@@ -930,6 +930,7 @@ module OpenSketchupDC
         case data["op"].to_s
         when "openNodes" then return cmd_nodes(data)
         when "openEntityGraph" then return cmd_graph(data["entityId"])
+        when "sceneGraph" then return cmd_scene_graph
         when "wireEntity"  then return graph_wire_entity(data)
         when "addParam"  then return graph_add_param(data)
         when "previewDoc", "applyDoc" then return graph_apply_doc(data)
@@ -1033,10 +1034,25 @@ module OpenSketchupDC
             "title" => sd["title"].to_s, "doc" => sd["doc"],
             "pos" => p.is_a?(Array) ? p[0, 2].map(&:to_f) : [120.0, 120.0] }
         end
+        # Display-title aliases keyed like positions - cosmetic only,
+        # never the data name.
+        titles = {}
+        (data["titles"] || {}).each do |name, t|
+          t = t.to_s.strip
+          titles[name.to_s] = t[0, 80] unless t.empty?
+        end
+        # Node color presets keyed like titles - the JS side only looks
+        # up names it knows, so sanitize to a short string.
+        colors = {}
+        (data["colors"] || {}).each do |name, k|
+          k = k.to_s.strip
+          colors[name.to_s] = k[0, 24] unless k.empty?
+        end
         (@graph_layout ||= {})[data["entityId"].to_s] =
           { "positions" => pos, "groups" => groups,
             "collapsed" => collapsed, "folds" => folds,
-            "showAll" => show_all, "stencils" => stencils }
+            "showAll" => show_all, "stencils" => stencils,
+            "titles" => titles, "colors" => colors }
       end
 
       # Scene-mode wire: drag from one entity's attr output to another's
@@ -1048,7 +1064,7 @@ module OpenSketchupDC
         from_attr = data["fromAttr"].to_s
         ent = entity(data["toEid"].to_s)
         if ent.nil?
-          push_error("Target entity no longer available")
+          push_graph_status("error" => "Target entity no longer available")
           return
         end
 
@@ -1059,21 +1075,22 @@ module OpenSketchupDC
           else
             src = entity(from_eid)
             if src.nil?
-              push_error("Source entity no longer available")
+              push_graph_status("error" => "Source entity no longer available")
               return
             end
             scope = Engine.node_name_of(src)
             unless scope =~ /\A[a-z_][a-z0-9_]*\z/
-              return push_error(
-                "'#{entity_label(src)}' can't be a formula scope - " \
-                "its node name '#{scope}' isn't a valid identifier")
+              return push_graph_status(
+                "error" => "'#{entity_label(src)}' can't be a formula scope - " \
+                           "its node name '#{scope}' isn't a valid identifier")
             end
             "#{scope}!#{from_attr}"
           end
 
         v = validate_formula(ent, ref, to_attr)
         unless v["ok"]
-          push_error("Formula not saved: #{v['errors'].join('; ')}")
+          push_graph_status("error" =>
+            "Formula not saved: #{v['errors'].join('; ')}")
           return
         end
         dict_name = DCReader.dict_name_for(ent)
@@ -1085,7 +1102,7 @@ module OpenSketchupDC
         refresh_pending_graph(ent, data["toEid"].to_s)
         push_graph
       rescue StandardError => e
-        push_error(e.message)
+        push_graph_status("error" => e.message)
       end
 
       # Scene payload: every top-level osdc entity as a node (attr slots
@@ -1104,7 +1121,24 @@ module OpenSketchupDC
           "collapsed" => layout["collapsed"],
           "folds" => layout["folds"],
           "showAll" => layout["showAll"],
-          "stencils" => layout["stencils"]
+          "stencils" => layout["stencils"],
+          "titles" => layout["titles"],
+          "colors" => layout["colors"],
+          # Expression-stencil palette for the scene canvas: only
+          # entity-independent catalogs - attrs come from the JS-side
+          # dcname!/global! scope fallback, dicts/actions are
+          # entity- or attr-specific and stay out.
+          "palette" => {
+            "builtins" => DCReader::BUILTIN_ATTRS,
+            "skprops" => SkProps::PROP_NAMES,
+            "modelprops" => SkProps::MODEL_PROP_NAMES,
+            "sceneprops" => SkProps::SCENE_PROP_NAMES,
+            "globals" => global_params(model).map { |g| g["name"] },
+            "functions" => Expression::FUNCTIONS,
+            "fnArity" => AstGraph::FN_ARITY,
+            "fnVararg" => AstGraph::FN_VARARG,
+            "fnGroups" => AstGraph::FN_GROUPS
+          }
         }
       end
 
@@ -1189,6 +1223,8 @@ module OpenSketchupDC
           "collapsed" => ((@graph_layout || {})[eid] || {})["collapsed"],
           "folds" => ((@graph_layout || {})[eid] || {})["folds"],
           "stencils" => ((@graph_layout || {})[eid] || {})["stencils"],
+          "titles" => ((@graph_layout || {})[eid] || {})["titles"],
+          "colors" => ((@graph_layout || {})[eid] || {})["colors"],
           "palette" => {
             "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
@@ -1239,7 +1275,8 @@ module OpenSketchupDC
         write_graph_formula(ent, data["entityId"].to_s, name, formula,
                             "Open DC: Graph formula #{name}")
         push_graph_status("ok" => true, "name" => name, "formula" => formula,
-                          "applied" => true)
+                          "applied" => true, "vid" => data["vid"].to_s,
+                          "eid" => data["entityId"].to_s)
       rescue StandardError => e
         push_graph_status("ok" => false, "name" => data["name"].to_s,
                           "errors" => [e.message])
@@ -1583,6 +1620,17 @@ module OpenSketchupDC
         targets.each do |t|
           Engine.mark_dirty(t) if DCReader.engine_of(t) == :osdc
         end
+        schedule_push
+      end
+
+      # EntitiesSpy path: any component/group change anywhere in the
+      # model, selected or not. Unmarked dicts still contribute their
+      # node names as ref scopes, so mark first and let evaluate_tree
+      # skip entities with no open_dc dict.
+      def on_any_change(e)
+        return unless e.is_a?(Sketchup::ComponentInstance) || e.is_a?(Sketchup::Group)
+
+        Engine.mark_dirty(e)
         schedule_push
       end
 

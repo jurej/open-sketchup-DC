@@ -252,10 +252,78 @@
     else if (ev.key === "Escape") hideNewAttr();
   });
 
+  // ---- node title alias ----------------------------------------------
+  // A custom title is a display label stored in lay.titles (or the
+  // fold/stencil record) - it never touches _odc.name, so scope refs,
+  // edges, fold membership and find-by-name all keep working. Empty
+  // input (or Reset) restores the data-derived title.
+  var renameTarget = null;
+
+  function openRename(n) {
+    var o = n && n._odc;
+    if (!o || !o.name) return;
+    renameTarget = n;
+    var real = n._odcTitle || o.name;
+    var hint = o.dcname ? " (scope: " + o.dcname + "!)" : "";
+    document.getElementById("grtext").textContent =
+      "Rename " + real + hint;
+    var inp = document.getElementById("grname");
+    inp.placeholder = real;
+    inp.value = n.title !== real ? n.title : "";
+    document.getElementById("grename").classList.add("show");
+    setTimeout(function () { inp.focus(); inp.select(); }, 0);
+  }
+
+  function hideRename() {
+    renameTarget = null;
+    document.getElementById("grename").classList.remove("show");
+  }
+
+  function submitRename(reset) {
+    var n = renameTarget;
+    var v = reset ? "" :
+      document.getElementById("grname").value.trim();
+    hideRename();
+    if (!n) return;
+    var o = n._odc;
+    var lay = layoutFor(cur.entityId);
+    if (o.kind === "fold") {
+      var fd = (lay.folds || {})[o.fid];
+      if (!fd) return;
+      fd.title = v || "Subgraph";
+      n.title = fd.title;
+    } else if (o.kind === "vx") {
+      var sd = (lay.stencils || {})[o.vid];
+      if (!sd) return;
+      if (v) sd.title = v; else delete sd.title;
+      n.title = sd.title || n._odcTitle;
+    } else {
+      lay.titles = lay.titles || {};
+      if (v) lay.titles[o.name] = v; else delete lay.titles[o.name];
+      n.title = v || n._odcTitle || o.name;
+    }
+    n.setDirtyCanvas(true, true);
+    sendLayoutSoon();
+  }
+
+  document.getElementById("grok").addEventListener("click",
+    function () { submitRename(false); });
+  document.getElementById("grreset").addEventListener("click",
+    function () { submitRename(true); });
+  document.getElementById("grcancel").addEventListener("click", hideRename);
+  document.getElementById("grname").addEventListener("keydown", function (ev) {
+    ev.stopPropagation();
+    if (ev.key === "Enter") submitRename(false);
+    else if (ev.key === "Escape") hideRename();
+  });
+
   // Async feedback for ops without a graph re-push: {error|msg} toasts;
   // {ok,formula|errors,applied} updates the subgraph preview/apply bar.
   window.onGraphStatus = function (r) {
-    if (r.ok !== undefined) return setSubStatus(r);
+    if (r.ok !== undefined) {
+      if (r.vid && r.applied) recordApplied(r);
+      return setSubStatus(r);
+    }
     if (r.error) toast(r.error, true);
     else if (r.msg) toast(r.msg);
   };
@@ -315,6 +383,9 @@
       this.clonable = false;
       this.block_delete = true;
       this._odc = {};
+      // Data-derived title kept for rename resets - a custom title is a
+      // display alias in lay.titles, never a rename of _odc.name.
+      this._odcTitle = this.title;
     }
     getMenuOptions() { return odcMenu(this); }
     // litegraph shows Remove/Rename Slot on slot right-click - those are
@@ -338,17 +409,14 @@
     getSlotMenuOptions() { return odcMenu(this); }
   }
 
-  // Stock litegraph collapses via a small square at the titlebar's left
-  // edge - hard to discover. The whole titlebar toggles collapse here
-  // (click = up without drag, so the titlebar stays a drag handle too).
-  // Title buttons keep their right-side strip out of the hit zone.
+  // Stock litegraph collapses via a small circle at the titlebar's left
+  // edge. Keep it a top-left glyph button only - the rest of the
+  // titlebar stays a drag handle and double-click rename zone - and
+  // draw a ComfyUI-style accordion chevron instead of the circle.
   var origCollapse = LGraphNode.prototype.collapse;
   LGraphNode.prototype.isPointInCollapse = function (x, y) {
-    var w = this.flags && this.flags.collapsed
-      ? (this._collapsed_width || LiteGraph.NODE_COLLAPSED_WIDTH)
-      : this.size[0];
-    w -= (this.title_buttons || []).length * LiteGraph.NODE_TITLE_HEIGHT;
-    return x >= this.pos[0] && x < this.pos[0] + w &&
+    return x >= this.pos[0] &&
+           x < this.pos[0] + LiteGraph.NODE_TITLE_HEIGHT &&
            y >= this.pos[1] - LiteGraph.NODE_TITLE_HEIGHT &&
            y < this.pos[1];
   };
@@ -357,41 +425,91 @@
     sendLayoutSoon();
   };
 
+  // Collapse glyph: chevron down while expanded, right while collapsed.
+  // Sits in the same top-left titlebox spot the stock circle occupies.
+  var origDrawTitleBox = LGraphNode.prototype.drawTitleBox;
+  LGraphNode.prototype.drawTitleBox = function (ctx, opts) {
+    if (this.onDrawTitleBox || !this.collapsible) {
+      return origDrawTitleBox.call(this, ctx, opts);
+    }
+    var th = (opts && opts.title_height) || LiteGraph.NODE_TITLE_HEIGHT;
+    var cx = th * 0.5, cy = th * -0.5;
+    ctx.strokeStyle = this.renderingBoxColor;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    if (this.flags && this.flags.collapsed) {
+      ctx.moveTo(cx - 2.5, cy - 4.5);
+      ctx.lineTo(cx + 3, cy);
+      ctx.lineTo(cx - 2.5, cy + 4.5);
+    } else {
+      ctx.moveTo(cx - 4.5, cy - 2.5);
+      ctx.lineTo(cx, cy + 3);
+      ctx.lineTo(cx + 4.5, cy - 2.5);
+    }
+    ctx.stroke();
+  };
+
+  // Stock resize hit-testing needs the pointer inside a 15-unit corner
+  // square - hard to hit, and invisible until the cursor changes. Widen
+  // the grab square, allow a few units of overshoot outside the bounds,
+  // and cap at half the node so corners can't overlap on small nodes.
+  // A corner bracket is drawn on hover in onDrawForeground (below).
+  var RESIZE_GRAB = 26, RESIZE_OVER = 9;
+  LGraphNode.prototype.findResizeDirection = function (x, y) {
+    if (this.resizable === false) return;
+    var b = this.boundingRect;
+    if (!b) return;
+    if (x < b.x - RESIZE_OVER || y < b.y - RESIZE_OVER ||
+        x > b.right + RESIZE_OVER || y > b.bottom + RESIZE_OVER) return;
+    var w = b.width != null ? b.width : b[2];
+    var h = b.height != null ? b.height : b[3];
+    var k = Math.min(RESIZE_GRAB + RESIZE_OVER, w / 2, h / 2);
+    if (x >= b.right - k && y >= b.bottom - k) return "SE";
+    if (x <= b.x + k && y >= b.bottom - k) return "SW";
+    if (x >= b.right - k && y <= b.y + k) return "NE";
+    if (x <= b.x + k && y <= b.y + k) return "NW";
+  };
+
   function odcMenu(n) {
     var o = n._odc || {};
-    if (o.kind === "fold") return [
+    var ren = { content: "Rename",
+      callback: function () { openRename(n); } };
+    if (o.kind === "fold") return [ren,
       { content: "Open subgraph",
         callback: function () { canvas.openSubgraph(n.subgraph); } },
       { content: "Unfold",
         callback: function () { unfold(o.fid); } }
     ];
-    if (o.kind === "vx") return [
+    if (o.kind === "vx") return [ren,
       { content: "Edit expression",
         callback: function () { canvas.openSubgraph(n.subgraph); } },
       { content: "Remove stencil",
         callback: function () { removeStencil(o.vid); } }
     ];
-    if (o.kind === "ent") return [
+    if (o.kind === "ent") return [ren,
       { content: "Open dependency graph",
-        callback: function () {
-          send({ op: "openEntityGraph", entityId: o.eid }); } },
+        callback: function () { navEntity(o.eid); } },
       { content: o.expanded ? "Hide unused attributes"
         : "Show all attributes" +
           (o.hidden ? " (" + o.hidden + " hidden)" : ""),
         callback: function () { toggleShowAll(o.eid); } }
     ];
-    if (o.kind === "pseudo") return [
+    if (o.kind === "pseudo") return [ren,
       { content: "(edit globals in the panel)", disabled: true }];
-    if (o.kind === "sub") return [
+    if (o.kind === "sub") return [ren,
       { content: "Open formula graph",
         callback: function () { canvas.openSubgraph(n.subgraph); } },
       { content: "Edit formula (fx)",
         callback: function () { openFx(o.name); } }
     ];
-    if (o.kind === "param") return [
+    if (o.kind === "param") return [ren,
       { content: "Open formula canvas",
         callback: function () { openFx(o.name); } }
     ];
+    if (o.kind === "ext" || o.kind === "virt") return [ren,
+      { content: "(external / builtin)", disabled: true }];
     return [{ content: "(external / builtin)", disabled: true }];
   }
 
@@ -734,6 +852,7 @@
     var sn = new ODCSubNode(rootGraph, sub, { id: -1 });
     sn._odc = { kind: "sub", name: d.id };
     sn.title = d.id;
+    sn._odcTitle = d.id;
     sn.setSize(sn.computeSize());
     if (d.cyclic) sn.boxcolor = cssVar("--error");
     return sn;
@@ -776,10 +895,137 @@
     buildSub(sub, sd.doc || { nodes: {}, links: [] });
     var sn = new ODCSubNode(rootGraph, sub, { id: -1 });
     sn._odc = { kind: "vx", name: "stencil:" + vid, vid: vid };
-    sn.title = stencilTitle(sd.doc);
+    sn._odcTitle = stencilTitle(sd.doc);
+    sn.title = sd.title || sn._odcTitle;
     sn.pos = sd.pos || [120, 120];
+    // One literal widget per input: an unwired slot keeps its name, so
+    // lits["b"] can only ever apply while b is unbound - wiring renames
+    // the slot (and the doc leaf) and the lit stops matching.
+    (sub.inputs || []).forEach(function (inp) {
+      var w = sn.addWidget("text", inp.name,
+        (sd.lits && sd.lits[inp.name]) || "",
+        function () { maybeReapply(vid); }, {});
+      w._litSlot = inp.name;
+    });
+    // A bare-const stencil is just a literal holder - edit its value on
+    // the node instead of diving inside.
+    var nds = (sd.doc && sd.doc.nodes) || {};
+    var rootNd = nds[sd.doc && sd.doc.root] ||
+                 (Object.keys(nds).length === 1 ? nds[Object.keys(nds)[0]]
+                                              : null);
+    if (rootNd && rootNd.t === "const" && !(sub.inputs || []).length) {
+      var cw = sn.addWidget("text", "value",
+        (sd.lits && sd.lits["__const"]) || rootNd.v,
+        function () { maybeReapply(vid); }, {});
+      cw._litSlot = "__const";
+    }
+    sn.onConnectionsChange = function () { syncLitWidgets(sn); };
+    syncLitWidgets(sn);
     sn.setSize(sn.computeSize());
     return sn;
+  }
+
+  // Hide an input's literal widget while that slot is wired - the bound
+  // ref wins, the literal is just the fallback.
+  function syncLitWidgets(n) {
+    var changed = false;
+    (n.widgets || []).forEach(function (w) {
+      if (!w._litSlot) return;
+      var inp = (n.inputs || []).find(function (i) {
+        return i.name === w._litSlot;
+      });
+      var h = !!(inp && inp.link != null);
+      if (w.hidden !== h) { w.hidden = h; changed = true; }
+    });
+    if (changed) {
+      n.setSize(n.computeSize());
+      n.setDirtyCanvas(true, true);
+    }
+  }
+
+  // Unwired-input literals typed on the stencil node, keyed by slot
+  // (= leaf) name. Empty values don't bind.
+  function litsOf(sn) {
+    var l = {};
+    (sn.widgets || []).forEach(function (w) {
+      if (w._litSlot && String(w.value || "").trim() !== "") {
+        l[w._litSlot] = String(w.value).trim();
+      }
+    });
+    return l;
+  }
+
+  // Bake unwired-input literals into the doc: a leaf whose name has a
+  // lit entry becomes a const. Bound leaves were renamed by their wire,
+  // so only unbound names can match.
+  function docWithLits(doc, lits) {
+    if (!lits || !Object.keys(lits).length) return doc;
+    var nodes = {};
+    Object.keys(doc.nodes || {}).forEach(function (id) {
+      var nd = doc.nodes[id];
+      if ((nd.t === "attr" || nd.t === "ref") && lits[nd.v] != null) {
+        var lit = window.ODCAst.parseLit(lits[nd.v]);
+        nodes[id] = { t: "const", v: lit.v, k: lit.k };
+      } else {
+        nodes[id] = nd;
+      }
+    });
+    // Bare-const stencil: the "value" widget edits the literal itself.
+    if (lits["__const"] != null) {
+      var rid = doc.root || Object.keys(nodes)[0];
+      var rn = rid && nodes[rid];
+      if (rn && rn.t === "const") {
+        var lit2 = window.ODCAst.parseLit(lits["__const"]);
+        nodes[rid] = { t: "const", v: lit2.v, k: lit2.k };
+      }
+    }
+    return { nodes: nodes, links: doc.links, root: doc.root };
+  }
+
+  // Once a stencil has been applied to a target, later edits (literal
+  // widgets, input rebinding, closing its interior) silently re-write
+  // the target's formula - but only while it still holds the exact
+  // text we wrote. A manual edit detaches the link.
+  function maybeReapply(vid) {
+    var lay = cur && cur.entityId && layoutByEnt[cur.entityId];
+    var sd = lay && lay.stencils && lay.stencils[vid];
+    var ap = sd && sd.appliedTo;
+    if (!ap) return;
+    var sn = (rootGraph._nodes || []).find(function (n) {
+      return n._odc && n._odc.vid === vid;
+    });
+    if (!sn) return;
+    if (targetFormula(ap.eid || cur.entityId, ap.name) !== ap.formula) {
+      sd.appliedTo = null;
+      return;
+    }
+    var doc = docWithLits(subDoc(sn.subgraph), litsOf(sn));
+    send({ op: "applyDoc", entityId: ap.eid || cur.entityId,
+           name: ap.name, doc: doc, vid: vid });
+  }
+
+  function targetFormula(eid, name) {
+    if (cur.scene) {
+      var n = (cur.graph.nodes || []).find(function (x) {
+        return x.id === eid;
+      });
+      var a = n && (n.attrs || []).find(function (x) {
+        return x.name === name;
+      });
+      return a && a.formula;
+    }
+    var t = nodeById(name);
+    return t && t.formula;
+  }
+
+  // Ruby echoes the applied formula back - record the target so edits
+  // can re-apply while the formula text still matches.
+  function recordApplied(r) {
+    var lay = cur && cur.entityId && layoutByEnt[cur.entityId];
+    var sd = lay && lay.stencils && lay.stencils[r.vid];
+    if (!sd) return;
+    sd.appliedTo = { eid: r.eid, name: r.name, formula: r.formula };
+    sendLayoutSoon();
   }
 
   // Find the node + output slot that should feed a stencil input named
@@ -814,6 +1060,7 @@
       if (!sd || !sd.doc) return;
       var sn = makeStencilNode(vid, sd);
       graph.add(sn);
+      applyLayColor(sn);
       (sn.inputs || []).forEach(function (inp, ii) {
         var src = refSourceFor(inp.name, idMap, g);
         if (!src || !src.node) return;
@@ -823,6 +1070,31 @@
             });
         if (oi >= 0) connectCross(src.node, oi, sn, ii, null);
       });
+      syncLitWidgets(sn);
+      // The applied binding drawn as a persistent link - a stencil's
+      // out-wire is consumed on write, so without this the connection
+      // looks rejected even though the formula landed.
+      var ap = sd.appliedTo;
+      if (ap &&
+          targetFormula(ap.eid || cur.entityId, ap.name) === ap.formula) {
+        var tn = cur.scene ? idMap[ap.eid] : idMap[ap.name];
+        if (tn) {
+          var tii = cur.scene
+            ? (tn.inputs || []).findIndex(function (i) {
+                return i.name === ap.name; })
+            : (tn.inputs || []).findIndex(function (i) {
+                return i.name === "deps"; });
+          if (!cur.scene && tii < 0) tii = 0;
+          if (tii >= 0) {
+            var al = connectCross(sn, 0, tn, tii,
+              { from: "stencil:" + vid, to: ap.name, applied: true });
+            if (al) al.color = cssVar("--accent2");
+          }
+        }
+      } else if (ap) {
+        // Formula diverged from what we wrote - the binding is stale.
+        sd.appliedTo = null;
+      }
     });
   }
 
@@ -833,12 +1105,41 @@
     lay.stencils = lay.stencils || {};
     var vid = "vx_" + Date.now().toString(36);
     var m = canvas.graph_mouse || [120, 120];
-    // A scoped pick (name!attr) is a ref, not a plain attr - same rule
-    // subDoc uses when serializing input dock slots.
-    var t = type === "attr" && String(v).indexOf("!") >= 0 ? "ref" : type;
-    var doc = { nodes: { n1: { t: t, v: v,
-                               k: (extra && extra.k) || null } },
-                links: [], root: null };
+    var doc;
+    // Operators become real op nodes: a/b (or x) leaves are the input
+    // dock slots, so the stencil gets wireable inputs + literal widgets
+    // on the outside immediately.
+    if (type === "bin") {
+      doc = { nodes: { ia: { t: "attr", v: "a" },
+                       ib: { t: "attr", v: "b" },
+                       op: { t: "bin", v: v } },
+              links: [{ f: "ia", t: "op", p: "a" },
+                      { f: "ib", t: "op", p: "b" }],
+              root: "op" };
+    } else if (type === "un") {
+      doc = { nodes: { ix: { t: "attr", v: "x" },
+                       op: { t: "un", v: v } },
+              links: [{ f: "ix", t: "op", p: "x" }],
+              root: "op" };
+    } else if (type === "call") {
+      // Functions get one named input per argument: friendly names
+      // (cond/then/else, x/ndigits, ...) from the astkit table so the
+      // outer slots read like the signature.
+      var arity = ((cur.palette || {}).fnArity || {})[v] || 1;
+      doc = { nodes: { fn: { t: "call", v: v } }, links: [], root: "fn" };
+      for (var ai = 0; ai < arity; ai++) {
+        var anm = window.ODCAst.argLabel("call", v, "arg" + ai, ai, arity);
+        doc.nodes["ia" + ai] = { t: "attr", v: anm };
+        doc.links.push({ f: "ia" + ai, t: "fn", p: "arg" + ai });
+      }
+    } else {
+      // A scoped pick (name!attr) is a ref, not a plain attr - same rule
+      // subDoc uses when serializing input dock slots.
+      var t = type === "attr" && String(v).indexOf("!") >= 0 ? "ref" : type;
+      doc = { nodes: { n1: { t: t, v: v,
+                             k: (extra && extra.k) || null } },
+              links: [], root: null };
+    }
     lay.stencils[vid] = { title: stencilTitle(doc), doc: doc,
                           pos: [m[0], m[1]] };
     window.renderGraph(cur);
@@ -848,7 +1149,7 @@
   // Wiring stencil.out -> param applies the doc as that param's formula
   // through the existing validated applyDoc path. Cross-entity in scene
   // mode: entityId is the target node's eid, name its attr.
-  function applyStencil(tEid, tName, doc) {
+  function applyStencil(tEid, tName, doc, vid) {
     var refs = docRefs(doc);
     var selfRef = tName;
     if (cur.scene) {
@@ -869,7 +1170,8 @@
       (t.attrs || []).some(function (a) {
         return a.name === tName && a.hasFormula; }));
     var go = function () {
-      send({ op: "applyDoc", entityId: tEid, name: tName, doc: doc });
+      send({ op: "applyDoc", entityId: tEid, name: tName, doc: doc,
+             vid: vid });
     };
     if (hasF) {
       askConfirm("Replace formula of '" + tName +
@@ -891,6 +1193,7 @@
     if (!si) return;
     si.name = newRef;
     window.renderGraph(cur);
+    maybeReapply(stencil._odc.vid);
     sendLayoutSoon();
   }
 
@@ -952,6 +1255,8 @@
     var idMap = {};
     (g.nodes || []).forEach(function (d, i) {
       var node = makeSceneNode(d, conn[d.id]);
+      var alias = lay && lay.titles && lay.titles[d.id];
+      if (alias) node.title = alias;
       var sz = node.computeSize();
       node.setSize(sz);
       var pos = stored[d.id] ? stored[d.id].slice(0, 2)
@@ -1012,7 +1317,8 @@
   function layoutFor(eid) {
     return layoutByEnt[eid] ||
       (layoutByEnt[eid] = { positions: {}, groups: [], collapsed: {},
-                            folds: {}, showAll: {}, stencils: {} });
+                            folds: {}, showAll: {}, stencils: {},
+                            titles: {}, colors: {} });
   }
 
   // Snapshot the current canvas arrangement before a rebuild so it can
@@ -1063,7 +1369,9 @@
           lay.stencils[n._odc.vid]) {
         var doc = subDoc(n.subgraph);
         st[n._odc.vid] = { title: stencilTitle(doc), doc: doc,
-                           pos: [n.pos[0], n.pos[1]] };
+                           pos: [n.pos[0], n.pos[1]],
+                           lits: litsOf(n),
+                           appliedTo: lay.stencils[n._odc.vid].appliedTo };
       }
     });
     // Keep records with no node on the old canvas: createStencil writes
@@ -1092,18 +1400,25 @@
 
   // Report the arrangement to Ruby (session memory - a reopened dialog
   // restores it). Debounced; drags send once per gesture.
+  function flushLayout() {
+    if (!cur || !cur.entityId) return;
+    clearTimeout(posTimer);
+    posTimer = null;
+    harvestLayout(); // catch menu edits (rename/recolor) too
+    var lay = layoutFor(cur.entityId);
+    send({ op: "saveLayout", entityId: cur.entityId,
+           positions: lay.positions, groups: lay.groups,
+           collapsed: lay.collapsed || {}, folds: lay.folds || {},
+           showAll: lay.showAll || {},
+           stencils: lay.stencils || {},
+           titles: lay.titles || {},
+           colors: lay.colors || {} });
+  }
+
   function sendLayoutSoon() {
     if (!cur || !cur.entityId) return;
     clearTimeout(posTimer);
-    posTimer = setTimeout(function () {
-      harvestLayout(); // catch menu edits (rename/recolor) too
-      var lay = layoutFor(cur.entityId);
-      send({ op: "saveLayout", entityId: cur.entityId,
-             positions: lay.positions, groups: lay.groups,
-             collapsed: lay.collapsed || {}, folds: lay.folds || {},
-             showAll: lay.showAll || {},
-             stencils: lay.stencils || {} });
-    }, 400);
+    posTimer = setTimeout(flushLayout, 400);
   }
 
   // "Add group" canvas menu entry - a colored container box; dragging
@@ -1142,8 +1457,10 @@
       var proxy = new ODCSubNode(graph, sub, { id: -1 });
       proxy._odc = { kind: "fold", name: "fold:" + fid, fid: fid };
       proxy.title = fd.title || "Subgraph";
+      proxy._odcTitle = "Subgraph";
       proxy.pos = fd.pos || [120, 120];
       graph.add(proxy);
+      applyLayColor(proxy);
       var fc = { fid: fid, data: fd, sub: sub, proxy: proxy,
                  inMap: {}, outMap: {} };
       Object.keys(fd.members).forEach(function (m) {
@@ -1154,8 +1471,19 @@
     return plan;
   }
 
+  // Node color preset from the layout (lay.colors[_odc.name]) - same
+  // alias channel as titles, using the litegraph/ComfyUI color set.
+  function applyLayColor(node) {
+    var lay = cur && cur.entityId && layoutByEnt[cur.entityId];
+    var key = lay && lay.colors && node._odc &&
+              lay.colors[node._odc.name];
+    var opt = key && lg.LGraphCanvas.node_colors[key];
+    if (opt) node.setColorOption(opt);
+  }
+
   // Where a graph node lands: inside its fold's subgraph or at root.
   function addGraphNode(plan, graph, node, d, pos, isCollapsed) {
+    applyLayColor(node);
     var fc = plan.memberOf[d.id];
     if (fc) {
       var ip = (fc.data.innerPos || {})[d.id];
@@ -1178,6 +1506,19 @@
   // other side. `data` is stamped on every created link segment so the
   // unlink menu works on either side of the boundary.
   function connectCross(s, oi, d, ii, data) {
+    // The hover tooltip prints data.toToolTip() when present - give the
+    // edge record a readable label instead of "[Object]".
+    if (data && typeof data === "object" && !data.toToolTip) {
+      data.toToolTip = function () {
+        var fl = data.fromAttr ? (s._odcTitle || s.title || data.from) +
+                                 "." + data.fromAttr
+                               : (data.from || s.title || "?");
+        var tl = data.toAttr ? (d._odcTitle || d.title || data.to) +
+                               "." + data.toAttr
+                             : (data.to || d.title || "?");
+        return fl + " -> " + tl;
+      };
+    }
     var fs = s._odcFold, fd = d._odcFold;
     if (fs === fd) {
       var l0 = s.connect(oi, d, ii);
@@ -1328,6 +1669,8 @@
       var y = 50;
       cols[lv].forEach(function (d) {
         var node = makeTopNode(d);
+        var alias = lay && lay.titles && lay.titles[d.id];
+        if (alias) node.title = alias;
         var sz = node.computeSize();
         node.setSize(sz);
         var pos = stored[d.id] ? stored[d.id].slice(0, 2)
@@ -1365,7 +1708,21 @@
     }
     var d = (segment && segment.data) || {};
     var items = [];
-    if (cur.scene && d.to) {
+    if (d.applied) {
+      // Stencil-applied binding - the formula is the stencil's whole
+      // doc, not a single ref, so detach just drops the live link.
+      items.push({ content: "Detach stencil (keep formula)",
+        callback: function () {
+          var vid = String(d.from).replace("stencil:", "");
+          var lay2 = layoutFor(cur.entityId);
+          if (lay2.stencils && lay2.stencils[vid]) {
+            lay2.stencils[vid].appliedTo = null;
+          }
+          window.renderGraph(cur);
+          sendLayoutSoon();
+        } });
+      items.push(null);
+    } else if (cur.scene && d.to) {
       items.push({ content: "Unlink (replace ref with literal)",
         callback: function () { unlinkSceneEdge(d); } });
       items.push(null);
@@ -1379,12 +1736,69 @@
     return false;
   }
 
+  // Rewire tracking: grabbing a connected end fires before-move-* with
+  // the original LLink. The old target keeps its formula unless we
+  // unlink it, so an input-end move off slot z onto slot x would leave
+  // z wired - the edge "jumps back" on rebuild. Unlinking substitutes
+  // the ref with its literal, same as the context menu.
+  var pendingMove = null;
+
+  function captureMove(side) {
+    return function (ev) {
+      pendingMove = null;
+      if (building) return;
+      var l = ev.detail && ev.detail.link;
+      if (!l) return;
+      var g = canvas.subgraph || rootGraph;
+      var sn = g.getNodeById(l.origin_id), dn = g.getNodeById(l.target_id);
+      if (!sn || !dn || !sn._odc || !dn._odc) return;
+      // Only formula-backed targets are unlinkable (entities at scene
+      // level, params + formula-subgraph nodes on a dep graph) -
+      // stencil/fold proxy ends have no formula to substitute into.
+      var ok = cur.scene ? dn._odc.kind === "ent" || dn._odc.kind === "pseudo"
+                         : dn._odc.kind !== "vx" && dn._odc.kind !== "fold";
+      if (!ok) return;
+      pendingMove = { side: side, sn: sn, dn: dn,
+                      originSlot: l.origin_slot, targetSlot: l.target_slot };
+    };
+  }
+
+  function unlinkDetached(pm) {
+    if (cur.scene) {
+      var on = (pm.sn.outputs || [])[pm.originSlot],
+          io = (pm.dn.inputs || [])[pm.targetSlot];
+      if (!on || !io) return;
+      var eid = pm.dn._odc.eid;
+      var refId = pm.sn._odc.kind === "pseudo" ? "global!" + on.name
+                                               : pm.sn._odc.dcname + "!" + on.name;
+      var edge = (cur.graph.edges || []).find(function (e) {
+        return e.to === eid && e.toAttr === io.name;
+      });
+      unlinkSceneEdge({ to: eid, toAttr: io.name, refId: refId,
+                        literal: (edge && edge.literal) || "0" });
+    } else {
+      unlinkEdge(pm.sn._odc.name, pm.dn._odc.name);
+    }
+  }
+
   // A user-drawn link is only an intent: the real edge set is owned by
   // Ruby. Remove it and send the wire op; the pushed re-render shows
   // the result. The fork dispatches link-created on the canvas's
   // linkConnector (one object for root and subgraph drags) - nothing
   // ever lands on LGraph#events, so listen once at canvas level.
   function wireLinkEvents() {
+    canvas.linkConnector.events.addEventListener("before-move-input",
+      captureMove("input"));
+    canvas.linkConnector.events.addEventListener("before-move-output",
+      captureMove("output"));
+    // A move that lands without a new link = drag-away disconnect.
+    canvas.linkConnector.events.addEventListener("after-drop-links",
+      function () {
+        if (!pendingMove) return;
+        var pm = pendingMove;
+        pendingMove = null;
+        unlinkDetached(pm);
+      });
     canvas.linkConnector.events.addEventListener("link-created",
       function (ev) {
         if (building) return;
@@ -1421,7 +1835,7 @@
         if (!s || !d || !s._odc || !d._odc) return;
         // Stencil source: apply its doc as the target's formula.
         if (s._odc.kind === "vx") {
-          var sdoc = subDoc(s.subgraph);
+          var sdoc = docWithLits(subDoc(s.subgraph), litsOf(s));
           if (!sdoc.root) {
             toast("Stencil is empty - double-click to build an " +
                   "expression first", true);
@@ -1437,7 +1851,8 @@
             ? ((d.inputs || [])[link.target_slot] || {}).name
             : d._odc.name;
           if (!tName) return;
-          applyStencil(cur.scene ? d._odc.eid : cur.entityId, tName, sdoc);
+          applyStencil(cur.scene ? d._odc.eid : cur.entityId, tName, sdoc,
+                     s._odc.vid);
           return;
         }
         // Stencil input target: rename that ref inside the doc.
@@ -1456,6 +1871,12 @@
           var o = (s.outputs || [])[link.origin_slot],
               i = (d.inputs || [])[link.target_slot];
           if (!o || !i) return;
+          var pm = pendingMove;
+          pendingMove = null;
+          if (pm && pm.side === "input" &&
+              !(pm.dn === d && pm.targetSlot === link.target_slot)) {
+            unlinkDetached(pm);
+          }
           wireEntity(s._odc.eid, o.name, d._odc.eid, i.name);
           return;
         }
@@ -1465,15 +1886,81 @@
           toast("'" + to + "' is a formula - edit via fx or dive in", true);
           return;
         }
+        if (pendingMove) {
+          var pmt = pendingMove;
+          pendingMove = null;
+          if (pmt.side === "input" &&
+              !(pmt.dn === d && pmt.targetSlot === link.target_slot)) {
+            unlinkDetached(pmt);
+          }
+        }
         wire(from, to);
       });
   }
 
+  // ---- breadcrumb navigation ----------------------------------------
+  // One canvas, one nav model: Scene > Entity > subgraph. The trail is
+  // derived from cur (the pushed payload) plus canvas.subgraph - no
+  // separate stack needed since this fork tracks one subgraph level.
+
+  // Pop the subgraph back to the root graph (entity or scene view).
+  function navRoot() {
+    var sub = canvas.subgraph;
+    canvas.subgraph = null;
+    canvas.setGraph(rootGraph);
+    updateCrumbs();
+    // Interior edits re-apply on close - while inside, a push would
+    // have rebuilt the canvas out from under the user.
+    if (sub && sub._odcStencil) maybeReapply(sub._odcStencil);
+  }
+
+  // Up to the scene view: Ruby rebuilds the scene pending and pushes it
+  // back through renderGraph, which resets cur.scene and the crumbs.
+  // flushLayout first - a pending debounced save would otherwise fire
+  // against the incoming view's entityId.
+  function navScene() {
+    flushLayout();
+    send({ op: "sceneGraph" });
+  }
+
+  // Scene node dive -> entity dependency graph (same op path as before).
+  function navEntity(eid) {
+    flushLayout();
+    send({ op: "openEntityGraph", entityId: eid });
+  }
+
+  // One level up: subgraph -> root, entity -> scene.
+  function navBack() {
+    if (canvas.subgraph) navRoot();
+    else if (cur && !cur.scene) navScene();
+  }
+
   function updateCrumbs() {
     var sub = canvas && canvas.subgraph;
-    document.getElementById("gback").style.display = sub ? "" : "none";
-    document.getElementById("gcrumb").textContent =
-      sub ? ("‹ " + sub.name) : "";
+    var trail = [{ label: "Scene",
+      act: cur && cur.scene ? null : navScene }];
+    if (cur && !cur.scene) {
+      trail.push({ label: cur.label || cur.entityId || "entity",
+                   act: sub ? navRoot : null });
+    }
+    if (sub) trail.push({ label: sub.name || "subgraph", act: null });
+    var nav = document.getElementById("gcrumbs");
+    nav.textContent = "";
+    trail.forEach(function (c, i) {
+      if (i) {
+        var s = document.createElement("span");
+        s.className = "gsep";
+        s.textContent = "›";
+        nav.appendChild(s);
+      }
+      var el = document.createElement(c.act ? "a" : "span");
+      el.className = c.act ? "gcr" : "gcur";
+      el.textContent = c.label;
+      if (c.act) el.addEventListener("click", c.act);
+      nav.appendChild(el);
+    });
+    document.getElementById("gback").style.display =
+      (sub || (cur && !cur.scene)) ? "" : "none";
     // The formula preview bar only applies to formula subgraphs; a fold
     // subgraph is a container, not an expression canvas.
     document.getElementById("gsubbar").style.display =
@@ -1489,6 +1976,7 @@
       document.getElementById("gsubapply").disabled = true;
       requestSubPreview();
     }
+    updateSelbox();
   }
 
   document.getElementById("gsubapply").addEventListener("click", function () {
@@ -1497,11 +1985,523 @@
                     doc: subDoc(sub) });
   });
 
-  document.getElementById("gback").addEventListener("click", function () {
-    canvas.subgraph = null;
-    canvas.setGraph(rootGraph);
-    updateCrumbs();
-  });
+  document.getElementById("gback").addEventListener("click", navBack);
+
+  // ---- canvas chrome: toolbar, selection toolbox, minimap -------------
+  // Mostly stock litegraph/ComfyUI features surfaced through our chrome:
+  // canvasNavigationMode gives the pan vs marquee-select tool pair,
+  // alwaysSnapToGrid draws alignment guides while dragging,
+  // dragZoomEnabled gives Ctrl+Shift-drag region zoom, and
+  // links_render_mode switches bezier styles. Toolbox + minimap are DOM
+  // overlays positioned from ds.offset/ds.scale. Preferences persist in
+  // localStorage (UI state, not graph layout - no Ruby round trip).
+  var uiPrefs = (function () {
+    try { return JSON.parse(localStorage.getItem("odc.graphui")) || {}; }
+    catch (e) { return {}; }
+  })();
+  var LINK_MODES = [["Straight", 0], ["Linear", 1], ["Spline", 2]];
+  var miniT = null;        // minimap world->pixel transform {s,ox,oy}
+  var findIdx = -1;
+
+  function saveUiPrefs() {
+    try { localStorage.setItem("odc.graphui", JSON.stringify(uiPrefs)); }
+    catch (e) {}
+  }
+
+  function selItems() {
+    return Array.from((canvas && canvas.selectedItems) || [])
+      .filter(function (it) { return it && it.pos && it.size; });
+  }
+
+  // Visual bounds: node boundingRect includes the titlebar (pos sits
+  // below it) and groups carry _bounding - plain pos+size would put
+  // chrome over the title area.
+  function boundsOf(items) {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    items.forEach(function (it) {
+      var r = it.boundingRect;
+      var l = r ? r.x : (it._bounding ? it._bounding[0] : it.pos[0]);
+      var t = r ? r.y : (it._bounding ? it._bounding[1] : it.pos[1]);
+      var rr = r ? r.right
+                 : (it._bounding ? it._bounding[0] + it._bounding[2]
+                                 : it.pos[0] + it.size[0]);
+      var bb = r ? r.bottom
+                 : (it._bounding ? it._bounding[1] + it._bounding[3]
+                                 : it.pos[1] + it.size[1]);
+      x0 = Math.min(x0, l); y0 = Math.min(y0, t);
+      x1 = Math.max(x1, rr); y1 = Math.max(y1, bb);
+    });
+    return isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+  }
+
+  function graphBounds(pad) {
+    var g = canvas && canvas.graph;
+    if (!g) return null;
+    var items = (g._nodes || []).concat(g._groups || []);
+    var b = boundsOf(items.map(function (it) {
+      if (it._bounding) {
+        return { pos: [it._bounding[0], it._bounding[1]],
+                 size: [it._bounding[2], it._bounding[3]] };
+      }
+      return it;
+    }));
+    if (!b) return null;
+    var p = pad || 0;
+    return { x: b.x - p, y: b.y - p, w: b.w + 2 * p, h: b.h + 2 * p };
+  }
+
+  // css px = (world + ds.offset) * ds.scale; center world point (wx,wy)
+  // by setting offsets so (w+off)*s lands at the css center.
+  function centerOn(wx, wy) {
+    var dpr = window.devicePixelRatio || 1;
+    var s = canvas.ds.scale;
+    canvas.ds.offset[0] = canvas.canvas.width / dpr / (2 * s) - wx;
+    canvas.ds.offset[1] = canvas.canvas.height / dpr / (2 * s) - wy;
+    canvas.setDirty(true, true);
+  }
+
+  // F / Fit button: fit the selection when there is one, else the graph.
+  function fitView() {
+    var b = boundsOf(selItems()) || graphBounds(60);
+    if (!b) { toast("Nothing on canvas"); return; }
+    var dpr = window.devicePixelRatio || 1;
+    var cw = canvas.canvas.width / dpr, ch = canvas.canvas.height / dpr;
+    canvas.ds.scale = Math.max(0.08,
+      Math.min(cw / b.w, ch / b.h, 1.5));
+    canvas.ds.offset[0] = cw / (2 * canvas.ds.scale) - (b.x + b.w / 2);
+    canvas.ds.offset[1] = ch / (2 * canvas.ds.scale) - (b.y + b.h / 2);
+    canvas.setDirty(true, true);
+  }
+
+  // Zoom keeping the world point under the canvas center fixed.
+  function zoomBy(f) {
+    var dpr = window.devicePixelRatio || 1;
+    var cx = canvas.canvas.width / (2 * dpr),
+        cy = canvas.canvas.height / (2 * dpr);
+    var wx = cx / canvas.ds.scale - canvas.ds.offset[0];
+    var wy = cy / canvas.ds.scale - canvas.ds.offset[1];
+    var s = Math.max(0.08, Math.min(4, canvas.ds.scale * f));
+    canvas.ds.scale = s;
+    canvas.ds.offset[0] = cx / s - wx;
+    canvas.ds.offset[1] = cy / s - wy;
+    canvas.setDirty(true, true);
+  }
+
+  function setNavMode(select) {
+    uiPrefs.select = select;
+    // standard: drag = marquee, Space/middle-drag pans, wheel scrolls,
+    // Ctrl+wheel zooms. legacy: drag pans, Ctrl+drag marquees.
+    LiteGraph.canvasNavigationMode = select ? "standard" : "legacy";
+    document.getElementById("gtpan").classList.toggle("on", !select);
+    document.getElementById("gtsel").classList.toggle("on", select);
+    saveUiPrefs();
+  }
+
+  function setSnap(on) {
+    uiPrefs.snap = on;
+    LiteGraph.alwaysSnapToGrid = on;
+    document.getElementById("gtsnap").classList.toggle("on", on);
+    saveUiPrefs();
+  }
+
+  function setLinkStyle(i) {
+    uiPrefs.linki = i;
+    var m = LINK_MODES[i];
+    document.getElementById("gtlink").textContent = m[0];
+    // LinkRenderType isn't exported from the umd - values are
+    // STRAIGHT=0, LINEAR=1, SPLINE=2 (enum order in the source).
+    if (canvas) {
+      canvas.links_render_mode = m[1];
+      canvas.setDirty(true, true);
+    }
+    saveUiPrefs();
+  }
+
+  function setMinimap(on) {
+    uiPrefs.minimap = on;
+    document.getElementById("gtmap").classList.toggle("on", on);
+    document.getElementById("gmini").style.display = on ? "block" : "none";
+    if (on) drawMinimap();
+    saveUiPrefs();
+  }
+
+  function drawMinimap() {
+    if (!uiPrefs.minimap || !canvas || !canvas.ds) return;
+    var mini = document.getElementById("gmini");
+    var W = mini.clientWidth || 180, H = mini.clientHeight || 120;
+    var dpr = window.devicePixelRatio || 1;
+    if (mini.width !== (W * dpr | 0)) {
+      mini.width = W * dpr; mini.height = H * dpr;
+    }
+    var ctx = mini.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var b = graphBounds(30);
+    if (!b) { miniT = null; return; }
+    var pad = 5;
+    var s = Math.min((W - 2 * pad) / b.w, (H - 2 * pad) / b.h);
+    var ox = pad + (W - 2 * pad - b.w * s) / 2 - b.x * s;
+    var oy = pad + (H - 2 * pad - b.h * s) / 2 - b.y * s;
+    miniT = { s: s, ox: ox, oy: oy };
+    var g = canvas.graph;
+    var dim = cssVar("--dim"), acc = cssVar("--accent");
+    (g._groups || []).forEach(function (gr) {
+      var gb = gr._bounding;
+      if (!gb) return;
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = gr.color || dim;
+      ctx.fillRect(gb[0] * s + ox, gb[1] * s + oy, gb[2] * s, gb[3] * s);
+      ctx.globalAlpha = 1;
+    });
+    (g._nodes || []).forEach(function (n) {
+      ctx.fillStyle = n.selected ? acc : dim;
+      ctx.fillRect(n.pos[0] * s + ox, n.pos[1] * s + oy,
+                   Math.max(n.size[0] * s, 2), Math.max(n.size[1] * s, 2));
+    });
+    ctx.strokeStyle = acc;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-canvas.ds.offset[0] * s + ox,
+                   -canvas.ds.offset[1] * s + oy,
+                   canvas.canvas.width / dpr / canvas.ds.scale * s,
+                   canvas.canvas.height / dpr / canvas.ds.scale * s);
+  }
+
+  function miniJump(e) {
+    if (!miniT || !canvas) return;
+    var r = document.getElementById("gmini").getBoundingClientRect();
+    centerOn((e.clientX - r.left - miniT.ox) / miniT.s,
+             (e.clientY - r.top - miniT.oy) / miniT.s);
+  }
+
+  // ---- selection toolbox -------------------------------------------
+  // Inline SVG glyphs swapped per selection state (collapse/expand,
+  // fold count) - static buttons keep their markup in index.html.
+  var ICO = {
+    collapse: '<svg viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5' +
+              'M9 20v-5H4M15 20v-5h5"/></svg>',
+    expand: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5' +
+            'M4 15v5h5M20 15v5h-5"/></svg>',
+    fold: '<svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21' +
+          'l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/></svg>'
+  };
+
+  function updateSelbox() {
+    var box = document.getElementById("gselbox");
+    if (!canvas || building || !rootGraph) {
+      box.style.display = "none"; return;
+    }
+    var items = selItems();
+    if (!items.length) { box.style.display = "none"; return; }
+    var b = boundsOf(items);
+    var dpr = window.devicePixelRatio || 1;
+    var sx = (b.x + b.w / 2 + canvas.ds.offset[0]) * canvas.ds.scale / dpr;
+    var sy = (b.y + canvas.ds.offset[1]) * canvas.ds.scale / dpr;
+    box.style.display = "flex";
+    var bw = box.offsetWidth || 200, bh = box.offsetHeight || 30;
+    var top = sy - bh - 10;
+    if (top < 44) { // above the header? float below the selection instead
+      top = (b.y + b.h + canvas.ds.offset[1]) * canvas.ds.scale / dpr + 10;
+    }
+    box.style.left = Math.max(6,
+      Math.min(window.innerWidth - bw - 6, sx - bw / 2)) + "px";
+    box.style.top = top + "px";
+    var inSub = !!canvas.subgraph;
+    var nodes = items.filter(function (it) {
+      return it instanceof lg.LGraphNode;
+    });
+    var anyOpen = nodes.some(function (n) {
+      return !(n.flags && n.flags.collapsed);
+    });
+    document.getElementById("gsbcol").innerHTML =
+      anyOpen ? ICO.collapse : ICO.expand;
+    document.getElementById("gsbcol").title =
+      anyOpen ? "Collapse selected nodes" : "Expand selected nodes";
+    document.getElementById("gsbcol").style.display =
+      nodes.length ? "" : "none";
+    document.getElementById("gsbalign").style.display =
+      nodes.length > 1 ? "" : "none";
+    var fc = inSub ? 0 : foldableCount();
+    var fb = document.getElementById("gsbfold");
+    fb.style.display = fc ? "" : "none";
+    fb.innerHTML = ICO.fold + fc;
+    fb.title = "Fold " + fc + " selected node" +
+               (fc === 1 ? "" : "s") + " into a subgraph";
+    var hasProxy = items.some(function (it) {
+      return it._odc && it._odc.kind === "fold";
+    });
+    document.getElementById("gsbunfold").style.display =
+      hasProxy ? "" : "none";
+    // Highlight the active swatch when a single node carries a color.
+    var opt = nodes.length === 1 && nodes[0].getColorOption ?
+              nodes[0].getColorOption() : null;
+    var curKey = null;
+    if (opt) {
+      var ncs = lg.LGraphCanvas.node_colors;
+      curKey = Object.keys(ncs).filter(function (k) {
+        return ncs[k] === opt;
+      })[0] || null;
+    }
+    [].forEach.call(
+      document.querySelectorAll("#gsbcolors .gsw"),
+      function (d) {
+        d.classList.toggle("cur",
+          !!(curKey && d.dataset.color === curKey));
+      });
+  }
+
+  function collapseAll(force) {
+    selItems().forEach(function (it) {
+      if (it instanceof lg.LGraphNode &&
+          !!(it.flags && it.flags.collapsed) !== force) {
+        it.collapse();
+      }
+    });
+  }
+
+  // Toolbox label says "Collapse" while any selected node is open -
+  // clicking drives every selected node to the target state.
+  function collapseSel() {
+    collapseAll(selItems().some(function (it) {
+      return it instanceof lg.LGraphNode &&
+             !(it.flags && it.flags.collapsed);
+    }));
+  }
+
+  // Build the ComfyUI-style swatch row from the palette the lib ships.
+  function buildSwatches() {
+    var row = document.getElementById("gsbcolors");
+    var none = document.createElement("div");
+    none.className = "gsw none";
+    none.title = "No color (default)";
+    none.addEventListener("click", function () { colorSel(null); });
+    row.appendChild(none);
+    Object.keys(lg.LGraphCanvas.node_colors).forEach(function (key) {
+      var opt = lg.LGraphCanvas.node_colors[key];
+      var d = document.createElement("div");
+      d.className = "gsw";
+      d.dataset.color = key;
+      d.title = key;
+      d.style.background = opt.bgcolor;
+      d.addEventListener("click", function () { colorSel(key); });
+      row.appendChild(d);
+    });
+  }
+
+  // Color is an alias like titles: preset name persists in lay.colors
+  // keyed on _odc.name; groups carry their own color in the group record.
+  function colorSel(key) {
+    var lay = layoutFor(cur.entityId);
+    lay.colors = lay.colors || {};
+    selItems().forEach(function (it) {
+      if (!it.setColorOption) return;
+      it.setColorOption(key ? lg.LGraphCanvas.node_colors[key] : null);
+      if (it instanceof lg.LGraphGroup) return; // gd.color round-trips
+      if (!it._odc || !it._odc.name) return;
+      if (key) lay.colors[it._odc.name] = key;
+      else delete lay.colors[it._odc.name];
+    });
+    canvas.setDirty(true, true);
+    sendLayoutSoon();
+    updateSelbox();
+  }
+
+  // "i" - surface the real data identity behind the display title.
+  function infoSel() {
+    var n = selItems().filter(function (it) {
+      return it instanceof lg.LGraphNode;
+    })[0];
+    if (!n) { toast("Select a node first", true); return; }
+    var o = n._odc || {};
+    var parts = [o.name || n.title];
+    if (o.dcname) parts.push("scope " + o.dcname + "!");
+    if (o.kind) parts.push(o.kind);
+    var slots = (n.inputs || []).length + (n.outputs || []).length;
+    if (slots) parts.push(slots + " slots");
+    toast(parts.join("  ·  "));
+  }
+
+  // "..." - the node's own menu for single selection, plus shared ops.
+  function moreMenu(e) {
+    var items = [];
+    var nodes = selItems().filter(function (it) {
+      return it instanceof lg.LGraphNode;
+    });
+    if (nodes.length === 1) {
+      items = odcMenu(nodes[0]).concat([null]);
+    }
+    if (!canvas.subgraph) {
+      items.push({ content: "Group around selection",
+                   callback: groupSel });
+    }
+    items.push(
+      { content: "Collapse all",
+        callback: function () { collapseAll(true); } },
+      { content: "Expand all",
+        callback: function () { collapseAll(false); } });
+    new LiteGraph.ContextMenu(items, { event: e,
+      callback: function () {} });
+  }
+
+  function alignSel(mode) {
+    var nodes = selItems().filter(function (it) {
+      return it instanceof lg.LGraphNode;
+    });
+    if (nodes.length < 2) { toast("Select 2+ nodes to align", true); return; }
+    var b = boundsOf(nodes);
+    if (mode === "h" || mode === "v") {
+      var ax = mode === "h" ? 0 : 1;
+      nodes.sort(function (p, q) { return p.pos[ax] - q.pos[ax]; });
+      var span = ax === 0 ? b.w : b.h;
+      var total = nodes.reduce(function (t, n) {
+        return t + n.size[ax];
+      }, 0);
+      var gap = Math.max(0, (span - total) / (nodes.length - 1));
+      var p = ax === 0 ? b.x : b.y;
+      nodes.forEach(function (n) {
+        n.pos[ax] = p;
+        p += n.size[ax] + gap;
+      });
+    } else {
+      nodes.forEach(function (n) {
+        if (mode === "l") n.pos[0] = b.x;
+        if (mode === "r") n.pos[0] = b.x + b.w - n.size[0];
+        if (mode === "t") n.pos[1] = b.y;
+        if (mode === "b") n.pos[1] = b.y + b.h - n.size[1];
+      });
+    }
+    canvas.setDirty(true, true);
+    sendLayoutSoon();
+  }
+
+  // Wrap the selection in a group box - same persistence path as
+  // "Add group": harvest picks it up and Ruby stores it.
+  function groupSel() {
+    var b = boundsOf(selItems());
+    if (!b) { toast("Select items to group", true); return; }
+    var grp = new lg.LGraphGroup("Group");
+    grp.pos = [b.x - 30, b.y - 46];
+    grp.size = [b.w + 60, b.h + 76];
+    rootGraph.add(grp);
+    grp.recomputeInsideNodes();
+    canvas.setDirty(true, true);
+    sendLayoutSoon();
+  }
+
+  function unfoldSel() {
+    selItems().forEach(function (it) {
+      if (it._odc && it._odc.kind === "fold") unfold(it._odc.fid);
+    });
+  }
+
+  function findNext() {
+    var q = document.getElementById("gfind").value.trim().toLowerCase();
+    if (!q || !canvas) return;
+    var g = canvas.graph || rootGraph;
+    var hits = (g._nodes || []).filter(function (n) {
+      var t = (n.title || "") + " " +
+              ((n._odc && n._odc.name) || "");
+      return t.toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b2) {
+      return (a.title || "").localeCompare(b2.title || "");
+    });
+    if (!hits.length) {
+      toast("No node matches \"" + q + "\"", true); return;
+    }
+    findIdx = (findIdx + 1) % hits.length;
+    var n = hits[findIdx];
+    canvas.deselectAll();
+    canvas.selectNodes([n]);
+    canvas.centerOnNode(n);
+    toast((findIdx + 1) + "/" + hits.length + ": " + (n.title || q));
+  }
+
+  function wireChrome() {
+    document.getElementById("gtpan").addEventListener("click",
+      function () { setNavMode(false); });
+    document.getElementById("gtsel").addEventListener("click",
+      function () { setNavMode(true); });
+    document.getElementById("gtzin").addEventListener("click",
+      function () { zoomBy(1.25); });
+    document.getElementById("gtzout").addEventListener("click",
+      function () { zoomBy(0.8); });
+    document.getElementById("gtfit").addEventListener("click", fitView);
+    document.getElementById("gtsnap").addEventListener("click",
+      function () { setSnap(!uiPrefs.snap); });
+    document.getElementById("gtlink").addEventListener("click",
+      function () { setLinkStyle(((uiPrefs.linki || 0) + 1) % 3); });
+    document.getElementById("gtmap").addEventListener("click",
+      function () { setMinimap(!uiPrefs.minimap); });
+    var findEl = document.getElementById("gfind");
+    findEl.addEventListener("input", function () { findIdx = -1; });
+    findEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { findNext(); e.preventDefault(); }
+      if (e.key === "Escape") findEl.blur();
+    });
+    document.getElementById("gsbcol").addEventListener("click",
+      collapseSel);
+    document.getElementById("gsbalign").addEventListener("click",
+      function (e) {
+        var opts = [
+          { content: "Align left",   callback: function () { alignSel("l"); } },
+          { content: "Align right",  callback: function () { alignSel("r"); } },
+          { content: "Align top",    callback: function () { alignSel("t"); } },
+          { content: "Align bottom", callback: function () { alignSel("b"); } },
+          null,
+          { content: "Distribute horizontally",
+            callback: function () { alignSel("h"); } },
+          { content: "Distribute vertically",
+            callback: function () { alignSel("v"); } }];
+        new LiteGraph.ContextMenu(opts, { event: e,
+          callback: function () {} });
+      });
+    document.getElementById("gsbfold").addEventListener("click",
+      foldSelection);
+    document.getElementById("gsbunfold").addEventListener("click",
+      unfoldSel);
+    document.getElementById("gsbinfo").addEventListener("click",
+      infoSel);
+    document.getElementById("gsbcolor").addEventListener("click",
+      function (e) {
+        e.currentTarget.classList.toggle("on");
+        document.getElementById("gsbcolors").classList.toggle("show");
+      });
+    document.getElementById("gsbmore").addEventListener("click",
+      moreMenu);
+    document.getElementById("gsbdel").addEventListener("click",
+      function () { canvas.deleteSelected(); });
+    buildSwatches();
+    // Minimap: click or drag to move the viewport.
+    var mini = document.getElementById("gmini"), dragging = false;
+    mini.addEventListener("pointerdown", function (e) {
+      dragging = true;
+      mini.setPointerCapture(e.pointerId);
+      miniJump(e);
+    });
+    mini.addEventListener("pointermove", function (e) {
+      if (dragging) miniJump(e);
+    });
+    mini.addEventListener("pointerup", function () { dragging = false; });
+    document.addEventListener("keydown", function (e) {
+      if (e.target && /^(input|textarea|select)$/i
+            .test(e.target.localName || "")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || !canvas) return;
+      var k = e.key.toLowerCase();
+      if (k === "f") { fitView(); e.preventDefault(); }
+      else if (k === "v") setNavMode(true);
+      else if (k === "h") setNavMode(false);
+      else if (k === "m") setMinimap(!uiPrefs.minimap);
+      else if (k === "g" && !canvas.subgraph) addGroup();
+    });
+  }
+
+  // Reflect saved prefs in the chrome; canvas-level prefs applied in
+  // ensureCanvas once the canvas exists.
+  function refreshChrome() {
+    setNavMode(!!uiPrefs.select);
+    setSnap(!!uiPrefs.snap);
+    setLinkStyle(uiPrefs.linki != null ? uiPrefs.linki : 2);
+    setMinimap(!!uiPrefs.minimap);
+  }
 
   function ensureCanvas() {
     if (canvas) return;
@@ -1517,6 +2517,51 @@
     // render_connection_arrows chevrons read backwards, so leave them off.
     canvas.render_connection_arrows = false;
     canvas.linkMarkerShape = lg.LinkMarkerShape.Arrow;
+    // Chrome hooks: the overlay draw fires on every canvas repaint, so
+    // the toolbox tracks pan/zoom and the minimap stays live for free.
+    canvas.dragZoomEnabled = true; // Ctrl+Shift+drag zooms into the box
+    canvas.onDrawOverlay = function () {
+      updateSelbox();
+      drawMinimap();
+      document.getElementById("gtzoom").textContent =
+        Math.round(canvas.ds.scale * 100) + "%";
+    };
+    // Resize affordance: faint SE grip whenever the pointer sits over a
+    // resizable node, bright corner bracket once it enters the grab zone
+    // (which findResizeDirection above reports + the cursor already
+    // reflects). ctx is in world coords here; sizes scale with zoom.
+    canvas.onDrawForeground = function (ctx) {
+      var n = canvas.node_over;
+      if (!n || n.resizable === false ||
+          (n.flags && n.flags.collapsed)) return;
+      var b = n.boundingRect;
+      if (!b) return;
+      var dir = canvas.pointer && canvas.pointer.resizeDirection;
+      ctx.save();
+      if (dir) {
+        var cx = dir.charAt(1) === "E" ? b.right : b.x;
+        var cy = dir.charAt(0) === "S" ? b.bottom : b.y;
+        var arm = 16 / canvas.ds.scale;
+        ctx.strokeStyle = cssVar("--accent");
+        ctx.lineWidth = 2 / canvas.ds.scale;
+        ctx.beginPath();
+        ctx.moveTo(cx + (dir.charAt(1) === "E" ? -arm : arm), cy);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx, cy + (dir.charAt(0) === "S" ? -arm : arm));
+        ctx.stroke();
+      } else {
+        var g = 12;
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = cssVar("--muted");
+        ctx.beginPath();
+        ctx.moveTo(b.right, b.bottom);
+        ctx.lineTo(b.right - g, b.bottom);
+        ctx.lineTo(b.right, b.bottom - g);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    };
     canvas.getCanvasMenuOptions = function () {
       if (canvas.subgraph) {
         var sub = canvas.subgraph;
@@ -1524,19 +2569,11 @@
           return [{ content: "Unfold",
             callback: function () { unfold(sub._odcFold); } },
             null, { content: "Back to dependencies",
-            callback: function () {
-              canvas.subgraph = null;
-              canvas.setGraph(rootGraph);
-              updateCrumbs();
-            } }];
+            callback: navRoot }];
         }
         var items = subMenuItems(sub);
         items.push(null, { content: "Back to dependencies",
-          callback: function () {
-            canvas.subgraph = null;
-            canvas.setGraph(rootGraph);
-            updateCrumbs();
-          } });
+          callback: navRoot });
         return items;
       }
       var fc = foldableCount();
@@ -1562,6 +2599,18 @@
     canvas.showLinkMenu = linkMenu;
     wireLinkEvents(); // once: linkConnector lives on the canvas, not the graph
     canvas.onNodeDblClicked = function (n) {
+      // Titlebar double-click renames (display alias); body keeps the
+      // open/dive behavior. Collapsed nodes keep opening - their whole
+      // visible area is the title, so a title check would swallow it.
+      // The left titlebox square is the collapse arrow - not a rename.
+      var mx = canvas.graph_mouse && canvas.graph_mouse[0];
+      var my = canvas.graph_mouse && canvas.graph_mouse[1];
+      if (n._odc && !(n.flags && n.flags.collapsed) &&
+          my != null && my < n.pos[1] &&
+          (mx == null || mx >= n.pos[0] + LiteGraph.NODE_TITLE_HEIGHT)) {
+        openRename(n);
+        return;
+      }
       // SubgraphNode check first - covers formula nodes and fold proxies
       // in both modes (a scene-mode fold proxy must open, not retarget).
       if (n.isSubgraphNode && n.isSubgraphNode()) {
@@ -1569,9 +2618,7 @@
         return;
       }
       if (cur && cur.scene) {
-        if (n._odc && n._odc.kind === "ent") {
-          send({ op: "openEntityGraph", entityId: n._odc.eid });
-        }
+        if (n._odc && n._odc.kind === "ent") navEntity(n._odc.eid);
         return;
       }
       if (n._odc) openFx(n._odc.name);
@@ -1581,7 +2628,10 @@
     canvas.onNodeMoved = function () { sendLayoutSoon(); };
     // Catch-all for changes that emit no drag event (group rename or
     // recolor through the built-in group menu).
-    canvas.onSelectionChange = function () { sendLayoutSoon(); };
+    canvas.onSelectionChange = function () {
+      sendLayoutSoon();
+      updateSelbox();
+    };
     canvas.deleteSelected = function () {
       if (canvas.subgraph) {
         if (canvas.subgraph._odcFold) {
@@ -1627,6 +2677,8 @@
       toast("Nodes are data-owned - use fx or the panel to edit");
     };
     el.addEventListener("subgraph-opened", updateCrumbs);
+    wireChrome();
+    refreshChrome();
     window.addEventListener("resize", function () { canvas.resize(); });
     // resize() reads the parent box in CSS px - correct once dpr is 1.
     requestAnimationFrame(function () { canvas.resize(); });
@@ -1649,9 +2701,9 @@
       if (data.folds) lay.folds = data.folds;
       if (data.showAll) lay.showAll = data.showAll;
       if (data.stencils) lay.stencils = data.stencils;
+      if (data.titles) lay.titles = data.titles;
+      if (data.colors) lay.colors = data.colors;
     }
-    document.getElementById("gtitle").textContent =
-      (data.label || "") + (data.scene ? " - wiring" : " - dependencies");
     document.getElementById("gadd").style.display = data.scene ? "none" : "";
     var empty = !(data.graph && data.graph.nodes && data.graph.nodes.length);
     document.getElementById("gmsg").textContent = data.scene
@@ -1664,7 +2716,19 @@
                     offset: [canvas.ds.offset[0], canvas.ds.offset[1]] };
     }
 
+    // Rebuilds swap every node object - remember the selection by its
+    // data key so toolbox work (select, then a formula write triggers a
+    // re-render) doesn't lose it mid-gesture.
+    var prevSel = {};
+    if (canvas) {
+      Object.keys(canvas.selected_nodes || {}).forEach(function (id) {
+        var n = canvas.selected_nodes[id];
+        if (n._odc && n._odc.name) prevSel[n._odc.name] = true;
+      });
+    }
+
     building = true;
+    pendingMove = null;   // node refs die with the old graph
     applyTheme();
     ensureCanvas();
     rootGraph = new lg.LGraph();
@@ -1677,6 +2741,13 @@
     canvas.subgraph = null;
     canvas.setGraph(rootGraph);
     building = false;
+
+    if (Object.keys(prevSel).length) {
+      var re = (rootGraph._nodes || []).filter(function (n) {
+        return n._odc && prevSel[n._odc.name];
+      });
+      if (re.length) canvas.selectNodes(re);
+    }
 
     // Keep pan/zoom across re-renders of the same entity; a retargeted
     // window (selection changed) starts at the default framing instead.

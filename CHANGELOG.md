@@ -37,15 +37,92 @@
   to unlink back to a literal; double-click a node to dive into that
   component's dependency graph. Layout + groups persist like the
   per-entity graph.
+- **Live cross-entity tracking**: `name!attr` refs now resolve builtin/
+  SketchUp names (z, lenx, rotx, hidden, name, ...) straight off the
+  source entity instead of a stale stored cache, the engine's dirty
+  flush fans out to every component whose formulas reference a changed
+  node name, and a model-wide entities observer catches moves of
+  unselected components — so `cylinder.z = box!z` tracks the box as you
+  drag it. Recomputes merge into the triggering operation's Undo step
+  instead of flooding the stack. Graph wire errors now toast in the
+  graph window (not the parameters panel), and link hovers label the
+  edge (`box.z -> cylinder.z`) instead of `[Object]`.
+- **Wire rewire**: dragging a connected wire's input end onto another
+  slot now actually moves the dependency — the old target's formula
+  gets the ref substituted by its literal (same as the unlink menu) so
+  the edge no longer "jumps back" on rebuild. Dropping a grabbed wire
+  on empty canvas disconnects it; dragging the output end re-sources
+  the wire through the normal replace-formula confirm.
+- **Operator stencils**: picking `+`, `-`, `*`, `/`, `%`, `^`, `AND`,
+  `OR`, comparisons or unary ops from the Expression palette now
+  creates a ready-made op node with `a`/`b` (or `x`) input slots and
+  `out` — `box.z → a`, type `2` into `b`'s literal field, `out →
+  cylinder.z` writes `box!z*2`. Every stencil input carries a literal
+  widget: wired slots take the bound ref (widget hides), unwired slots
+  substitute the typed value as a `const` at apply time. Literals
+  persist in the layout record alongside the doc.
+- **Function stencils**: picking a function (ROUND, IF, CHOOSE, ...)
+  creates a node with one named input per argument (`x`/`ndigits`,
+  `cond`/`then`/`else`, ...) — same wire-or-literal semantics.
+  Bare-literal stencils get an editable `value` field on the node.
+- **Live stencils**: after a stencil is applied to an attribute, its
+  node stays bound — editing a literal field, rewiring an input, or
+  closing the stencil interior rewrites the target's formula
+  immediately, as long as the formula still holds the exact text the
+  stencil wrote. Editing the formula by hand detaches the binding
+  instead of fighting the user. The applied link renders as a
+  persistent accent-colored edge from `out` to the target slot so a
+  successful apply no longer looks like a rejected wire; right-click
+  it to detach (keeps the formula) while ref-unlink still substitutes
+  a literal for regular edges.
 - **Expression stencils** (both graph modes): right-click canvas →
   "Expression" gives the full formula palette (operators, literals,
   attributes, functions). A pick seeds a scratch subgraph node — dive
   in to compose, inputs auto-link to same-named attrs, and wiring its
   output to a param applies the composed formula (cross-entity in
   scene mode). Stencils persist as canvas state; Del removes them.
+- **One-canvas navigation**: scene, entity dependency and formula/
+  fold subgraphs are levels of a single graph view, with a clickable
+  breadcrumb trail in the header (Scene › component › subgraph).
+  Double-click dives down a level, a crumb or the ‹ button goes back
+  up; layout state flushes before a hop so positions never land in
+  the wrong view's bucket.
 - **Compact scene nodes**: builtins hide unless they carry a formula
   or an edge endpoint. Right-click a node → "Show all attributes (N
   hidden)" to expand; the choice persists per node.
+- **Canvas chrome** (both graph modes): a floating toolbar with a
+  Pan/Select tool pair (drag pans vs marquee box-select — the vendored
+  litegraph's `canvasNavigationMode`), zoom out/in + Fit (fits the
+  selection when there is one), Snap-to-grid toggle (alignment guides
+  while dragging), link style cycle (spline/linear/straight), a node
+  find box, and a minimap overlay (click/drag to move the viewport).
+  Selecting nodes floats a ComfyUI-style selection toolbox over
+  them: a swatch row (the litegraph `node_colors` set — colours the
+  node's title and body, persisted per node in the layout like
+  title aliases; groups colour through their own record), then an
+  icon button row — remove, info (toasts the real data name,
+  `dcname!` scope and slot count behind a display title), colour
+  toggle, collapse/expand, align + distribute, fold (with count),
+  unfold, and a "..." menu with the node's own actions plus
+  group-around and collapse/expand-all. Ctrl+Shift-drag zooms into a box
+  (`dragZoomEnabled`), middle-drag always pans, Space+drag pans in
+  select mode. Selection now survives graph re-renders so a formula
+  write mid-selection doesn't drop the toolbox. Chrome prefs persist
+  via localStorage.
+- **Easier node resizing**: the grab zone grew from a 15px in-bounds
+  corner to ~35 units with ~9px of overshoot outside the edge, a faint
+  corner grip shows whenever the pointer is over a resizable node, and
+  a bright corner bracket marks the active grab (all four corners).
+- **Accordion collapse**: the titlebar collapse affordance is back
+  to a top-left glyph only - a ComfyUI-style chevron (down expanded,
+  right collapsed) drawn in place of the stock circle. The rest of
+  the titlebar is free for dragging and double-click renaming.
+- **Editable node titles** (both graph modes): double-click a
+  titlebar (or right-click → Rename) for a display alias stored in
+  the layout — it never rewrites the data name, so scope refs,
+  edges, folds and find-by-name keep working. Empty/Reset restores
+  the data title; entity nodes show their `dcname!` scope hint in
+  the dialog. Fold and stencil titles persist in their records.
 - **Fold nodes into subgraphs** (both graph modes): select nodes,
   right-click canvas → "Fold N nodes into subgraph". Members collapse
   into a proxy node and boundary edges rewire through its slots —
@@ -70,6 +147,11 @@
   of value evaluation.
 - Dependency graph includes formula-less parameters and builtins as
   nodes — wiring a dependency into one writes + adopts the formula.
+- Scene graph Expression submenu was missing its functions and scope
+  refs: the scene payload now ships the entity-independent palette
+  catalogs (`functions`/`fnGroups`, `sketchup!`/`model!`/`scene!`
+  props, globals, builtins). Entity-specific entries (`dicts`, action
+  functions) stay out deliberately.
 - `_<attr>_error` clears on the first good eval — a recovered formula no
   longer keeps a phantom error flag in the panel (`apply:` driver errors
   remain owned by the apply pass). Typing `parent!`/`root!`/`global!`

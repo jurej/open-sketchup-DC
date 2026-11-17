@@ -57,9 +57,13 @@ module OpenSketchupDC
         @dirty.clear
         return if batch.empty? || model.nil?
 
+        batch = expand_dependents(batch, model)
+
         @applying = true
         begin
-          Helpers.undo_wrap(model, "Open DC: Recompute") do
+          # prev_transparent: recomputes fold into the operation that
+          # triggered them (a move, an edit) instead of flooding Undo.
+          Helpers.undo_wrap(model, "Open DC: Recompute", transparent: true) do
             batch.each { |e| evaluate_tree(e, model) }
           end
         ensure
@@ -70,6 +74,62 @@ module OpenSketchupDC
         @applying = false
         puts "#{PLUGIN_NAME}: engine flush failed - #{e.message}"
         puts e.backtrace.first(5).join("\n") if e.backtrace
+      end
+
+      # Cross-entity `name!` refs: a dirty entity's dependents must
+      # re-evaluate too - evaluate_tree only recurses into children.
+      # Expands to a fixpoint (a dependent is itself a scope source).
+      # Name-matching is approximate on purpose: a nested `shelf!w` may
+      # resolve to a sibling, so over-marking beats a missed recompute.
+      def expand_dependents(batch, model)
+        all = dynamic_entities(model)
+        loop do
+          scopes = batch.map { |e| node_name_of(e) }.uniq
+          added = all.select do |e|
+            !batch.include?(e) && references_scope?(e, scopes)
+          end
+          break if added.empty?
+
+          batch.concat(added)
+        end
+        batch
+      end
+
+      def dynamic_entities(model)
+        out = model.entities.select { |e| !e.deleted? && dynamic_child?(e) }
+        model.definitions.each do |d|
+          d.entities.each do |e|
+            out << e if !e.deleted? && dynamic_child?(e)
+          end
+        end
+        out
+      end
+
+      # True when any stored `_x_formula` on the entity (or its
+      # definition) references one of the given scope names.
+      def references_scope?(entity, scopes)
+        dicts = [DCReader.dict_of(entity, OS_DC_DICT)]
+        if entity.is_a?(Sketchup::ComponentInstance)
+          dicts << DCReader.dict_of(entity.definition, OS_DC_DICT)
+        end
+        dicts.compact.each do |d|
+          DCReader.dict_keys(d).each do |k|
+            next unless k =~ /\A_.+_formula\z/
+
+            f = DCReader.dict_get(d, k).to_s
+            next if f.empty?
+
+            refs = begin
+              Expression.refs(f)
+            rescue StandardError
+              next
+            end
+            return true if refs.any? { |s, _| s && scopes.include?(s) }
+          end
+        end
+        false
+      rescue StandardError
+        false
       end
 
       # ------------------------------------------------------------------
@@ -252,6 +312,17 @@ module OpenSketchupDC
         else
           sib = node_named(scope, inst, parent_ctx, model)
           if sib
+            # Native/builtin names resolve live: stored <attr> is only a
+            # computed cache - it doesn't track external moves or edits.
+            if SkProps.known?(name)
+              v = begin
+                SkProps.value_of(sib, name, dict_name: OS_DC_DICT)
+              rescue StandardError
+                nil
+              end
+              return v unless v.nil?
+            end
+
             dict = DCReader.dict_of(sib, OS_DC_DICT)
             dict ||= DCReader.dict_of(sib.definition, OS_DC_DICT) if sib.is_a?(Sketchup::ComponentInstance)
             v = DCReader.dict_get(dict, name)
