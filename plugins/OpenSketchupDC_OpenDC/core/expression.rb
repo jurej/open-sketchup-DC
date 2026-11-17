@@ -23,6 +23,7 @@ module OpenSketchupDC
     #   meta: ->(name, field) # attribute meta (for OPTION*/CURRENT)
     #   env:  ->(fn, args)    # model functions (EDGES LAT SUNANGLE ...)
     #   fx:   ->(fn, args)    # onClick actions (SET ANIMATE* ...)
+    #   dict: ->(dict, key)   # attribute-dictionary reads (DICTATTR)
     module Expression
       class Error < StandardError; end
 
@@ -325,6 +326,7 @@ module OpenSketchupDC
         LARGEST SMALLEST NEAREST
         OPTIONINDEX OPTIONVALUE OPTIONLABEL
         EDGES FACES FACEAREA LAT LNG SUNANGLE SUNELEVATION
+        DICTATTR
       ].freeze
 
       class Evaluator
@@ -344,6 +346,7 @@ module OpenSketchupDC
           @meta = ctx[:meta] || ->(_n, _f) { nil }
           @env  = ctx[:env]
           @fx   = ctx[:fx]
+          @dict = ctx[:dict]
         end
 
         def eval_node(node)
@@ -456,6 +459,11 @@ module OpenSketchupDC
             cur = @get.call(an)
             opt = option_list(an).find { |o| loose_eq(o[1], cur) }
             opt && opt[0]
+          when "DICTATTR"
+            raise Error, "DICTATTR needs 2 arguments" unless args.length == 2
+            raise Error, "DICTATTR requires dictionary context" if @dict.nil?
+
+            @dict.call(str(eval_node(args[0])), str(eval_node(args[1])))
           # ---- math -----------------------------------------------------------
           when "MIN", "MAX"
             vals = args.map { |a| num(eval_node(a)) }

@@ -275,6 +275,16 @@
         return addItem("ref", "global!" + g);
       })));
     }
+    if ((state.skprops || []).length) {
+      attrSubs.push(sub("SketchUp props", state.skprops.map(function (n) {
+        return addItem("ref", "sketchup!" + n);
+      })));
+    }
+    if ((state.dicts || []).length) {
+      attrSubs.push(sub("Dictionaries", state.dicts.map(function (n) {
+        return addItem("ref", n);
+      })));
+    }
     // Functions grouped by category (fnGroups from AstGraph::FN_GROUPS);
     // anything not listed lands in "Other".
     var fns = state.functions || [];

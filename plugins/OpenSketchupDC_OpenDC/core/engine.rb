@@ -136,6 +136,10 @@ module OpenSketchupDC
         out = {}
         ps.each do |p|
           next if p.internal? || p.builtin?
+          # Drivers (sketchup!name, dict!key) write only values the
+          # current eval produced - a formula-less driver or a failed
+          # eval must not keep pushing a stale cache to the target.
+          next if SkProps.driver_name?(p.name) && !computed.key?(p.name)
 
           out[p.name] = computed.key?(p.name) ? computed[p.name] : p.value
         end
@@ -161,7 +165,14 @@ module OpenSketchupDC
           return copy_index.to_f if n == "copy" && copy_index
 
           p = ps[n]
-          raise Expression::Error, "undefined attribute '#{n}'" if p.nil?
+          if p.nil?
+            # Unclaimed native names (name, description, layer, ...) fall
+            # through to live entity state - the same values sketchup!n
+            # resolves, matching what BUILTIN_ATTRS already advertises.
+            return SkProps.value_of(inst, n, dict_name: OS_DC_DICT) if SkProps.known?(n)
+
+            raise Expression::Error, "undefined attribute '#{n}'"
+          end
 
           p.value
         end
@@ -176,6 +187,7 @@ module OpenSketchupDC
         end
 
         env = env_for(inst, model)
+        dict = ->(dn, k) { SkProps.dict_value(inst, dn, k) }
 
         order.each do |name|
           p = ps[name]
@@ -183,7 +195,8 @@ module OpenSketchupDC
 
           begin
             computed[name] = Expression.eval!(p.formula,
-                                              get: get, ref: ref, meta: meta, env: env)
+                                              get: get, ref: ref, meta: meta, env: env,
+                                              dict: dict)
           rescue StandardError => e
             errors[name] = e.message
           end
@@ -211,16 +224,33 @@ module OpenSketchupDC
           raise Expression::Error, "no global attribute '#{name}'" if v.nil?
 
           v
+        when "sketchup"
+          SkProps.value_of(inst, name, dict_name: OS_DC_DICT)
         else
           sib = node_named(scope, inst, parent_ctx, model)
-          raise Expression::Error, "no node named '#{scope}'" unless sib
+          if sib
+            dict = DCReader.dict_of(sib, OS_DC_DICT)
+            dict ||= DCReader.dict_of(sib.definition, OS_DC_DICT) if sib.is_a?(Sketchup::ComponentInstance)
+            v = DCReader.dict_get(dict, name)
+            raise Expression::Error, "node '#{scope}' has no attribute '#{name}'" if v.nil?
 
-          dict = DCReader.dict_of(sib, OS_DC_DICT)
-          dict ||= DCReader.dict_of(sib.definition, OS_DC_DICT) if sib.is_a?(Sketchup::ComponentInstance)
-          v = DCReader.dict_get(dict, name)
-          raise Expression::Error, "node '#{scope}' has no attribute '#{name}'" if v.nil?
+            return v
+          end
 
-          v
+          # No sibling node by that name: an attribute dictionary on this
+          # entity (or its definition) can also be a scope, e.g.
+          # su_instanceset!price. Node names win the collision.
+          if (fdict = SkProps.dict_named(inst, scope))
+            v = SkProps.dict_get(fdict, name)
+            if v.nil?
+              raise Expression::Error,
+                    "dictionary '#{SkProps.dict_name_of(fdict)}' has no attribute '#{name}'"
+            end
+
+            return SkProps.scalar?(v) ? v : v.to_s
+          end
+
+          raise Expression::Error, "no node named '#{scope}'"
         end
       end
 

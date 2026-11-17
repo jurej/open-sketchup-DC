@@ -535,6 +535,8 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 .fxkind.glob { background: var(--fxkind-glob-bg); color: var(--accent2); }
 .fxkind.fn   { background: var(--fxkind-fn-bg); color: var(--fn); }
 .fxkind.act  { background: var(--fxkind-act-bg); color: var(--warn); }
+.fxkind.skp  { background: var(--fxkind-glob-bg); color: var(--accent2); }
+.fxkind.dict { background: var(--border); color: var(--dim); }
 .fxstatus { margin-top: 4px; font-size: 10px; }
 .fxstatus .bad  { color: var(--error); }
 .fxstatus .hint { color: var(--warn); }
@@ -580,6 +582,61 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 /* folded cards align with the summary bar edges */
 #entsfold .foldbody { margin-bottom: 10px; }
 #entsfold .foldbody .card { margin: 10px 0 0; }
+
+/* ---------- foldable native / dictionary sections ---------- */
+.foldsec {
+  margin: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.foldsec > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  user-select: none;
+}
+.foldsec > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 7px;
+  transition: transform .12s;
+}
+.foldsec[open] > summary::before { transform: rotate(90deg); }
+.foldsec > summary:hover { color: var(--fg); }
+.foldsec[open] > summary { border-bottom: 1px solid var(--border); }
+.foldsec .fcount { color: var(--accent); }
+.foldsec > .prow:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+
+/* nested dictionary groups inside the dictionaries fold */
+.dictgroup { border-top: 1px solid var(--border); }
+.dictgroup > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 5px 10px;
+  color: var(--fg);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+  user-select: none;
+}
+.dictgroup > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--dim);
+  transition: transform .12s;
+}
+.dictgroup[open] > summary::before { transform: rotate(90deg); }
+.dictgroup > summary:hover { color: var(--accent); }
+.dictgroup .downer {
+  color: var(--muted);
+  font-size: 9.5px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
 
 /* ---------- add form ---------- */
 .addrow { padding: 4px 10px 10px; }

@@ -13,6 +13,7 @@ window.OpenDC = (function () {
   var fxValid = {};   // entityId::name -> last validation ok flag (true/false/undefined)
   var fxReqSeq = 0;
   var entsFolded = true; // multi-select: per-entity cards folded behind a summary
+  var openFolds = {};    // entityId::section key -> open (survives re-render)
 
   // Classic DC _<name>_units vocabulary + display suffixes. DEFAULT is
   // native "End user's model units" - resolved server-side per param.
@@ -150,7 +151,9 @@ window.OpenDC = (function () {
     var cards = ents.map(function (e) {
       var cfg = configMode;
       var params = (e.params || []).filter(function (p) {
-        return cfg ? match(p, q) : (match(p, q) && p.access !== "NONE" && !p.internal);
+        // Driver attrs (name contains "!") live in the foldable sections.
+        return p.name.indexOf("!") < 0 && (cfg ? match(p, q)
+          : (match(p, q) && p.access !== "NONE" && !p.internal));
       });
       return '<div class="card" data-eid="' + esc(e.entityId) + '">' +
         '<header>' +
@@ -209,6 +212,7 @@ window.OpenDC = (function () {
         (params.length ? "" : '<div class="prow"><span class="pname">' +
           (e.dynamic === false ? "No attributes yet." : "No parameters.") + '</span></div>') +
         '</div>' +
+        (cfg ? skSection(e) + dictsSection(e) : "") +
         (cfg ? addFormHtml(e) : "") +
         '</div>';
     }).join("");
@@ -240,6 +244,104 @@ window.OpenDC = (function () {
       'not the DC _name used for node! references"><b>Instance name</b></span>' +
       '<span><input type="text" data-iname value="' + esc(e.instanceName || "") + '"' +
       ' placeholder="(unnamed)"></span><span></span></div>';
+  }
+
+  /* ---------------- foldable native / dictionary sections ---------------- */
+  // Live entity properties (sketchup! scope) and foreign attribute
+  // dictionaries. Writes go straight to the entity/dict - nothing is
+  // stored in the DC dictionary. <details> open state is kept in
+  // openFolds so a state push doesn't collapse the sections.
+
+  function foldKey(card, det) {
+    var eid = card ? card.getAttribute("data-eid") : "?";
+    return eid + "::" + (det.getAttribute("data-fold") || det.getAttribute("data-dg"));
+  }
+
+  // One row in the native/dictionary sections. Writable entries may be
+  // driven by a formula ("driver" attr stored as <ref>_formula) - shown
+  // as an fx button that toggles a lean editor. Read-only rows display
+  // and stay referenceable (sketchup!x / dict!key) as formula inputs.
+  function secRow(e, ref, label, tip, valueHtml, canFx, driven) {
+    var key = e.entityId + "::" + ref;
+    var f = driven && driven.formula ? driven.formula : "";
+    var err = driven && driven.error
+      ? '<div class="err">' + esc(driven.error) + '</div>' : "";
+    var fx = canFx
+      ? '<button class="small' + (f ? " fx-on" : "") + '" data-edit="' +
+        esc(key) + '" data-name="' + esc(ref) + '"' +
+        ' title="Drive with a formula' + (f ? " - " + esc(f) : "") + '">fx</button>'
+      : "";
+    var html = '<div class="prow">' +
+      '<span class="pname" title="' + esc(tip) + '"><b>' + esc(label) + '</b>' +
+      (f ? ' <span class="formula-hint">fx</span>' : "") + '</span>' +
+      '<span>' + valueHtml + '</span>' +
+      '<span>' + fx + '</span>' + err + '</div>';
+    if (canFx && openEdit[key]) html += secEditorHtml(ref, f);
+    return html;
+  }
+
+  // Minimal editor for a driver ref (sketchup!prop / dict!key): just the
+  // formula. data-pedit carries the ref so the shared [data-save] loop and
+  // the live validator handle it like any attribute editor.
+  function secEditorHtml(ref, formula) {
+    var n = esc(ref);
+    return '<div class="pedit" data-pedit="' + n + '">' +
+      '<div class="full"><label>formula - drives ' + n +
+      ' on every recompute &middot; clear and Apply to stop driving</label>' +
+      '<div class="fxedit">' +
+      '<div class="fxed" contenteditable="true" spellcheck="false" autocapitalize="off"></div>' +
+      '<input type="hidden" data-f="formula" value="' + esc(formula || "") + '">' +
+      '<button type="button" class="fxbtn" data-fxdocs ' +
+      'title="Function &amp; syntax reference">&#402;(x)</button>' +
+      '<button type="button" class="fxbtn" data-fxnodes="' + n + '" ' +
+      'title="Edit as node graph"><i class="modus-icon-graph" aria-hidden="true"></i></button>' +
+      '<div class="fxlist hidden"></div></div>' +
+      '<div class="fxstatus"></div></div>' +
+      '<div class="full row-actions">' +
+      '<button class="small confirm" data-save="' + n + '" ' +
+      'title="Apply this formula">Apply</button>' +
+      '</div></div>';
+  }
+
+  function skSection(e) {
+    var props = e.sketchup || [];
+    if (!props.length) return "";
+    var osdc = e.engine === "osdc";
+    var rows = props.map(function (p) {
+      var ref = "sketchup!" + p.name;
+      var inp = p.writable
+        ? '<input type="text" data-skprop="' + esc(p.name) + '" value="' +
+          esc(fmt(p.value)) + '"' + (p.formula ? " disabled" : "") + '>'
+        : '<span class="ro">' + esc(fmt(p.value)) + '</span>';
+      return secRow(e, ref, p.label, p.tip || ref, inp, osdc && p.writable, p);
+    }).join("");
+    return '<details class="foldsec sksec" data-fold="sk">' +
+      '<summary>SketchUp</summary>' + rows + '</details>';
+  }
+
+  function dictsSection(e) {
+    var dicts = e.dictionaries || [];
+    if (!dicts.length) return "";
+    var osdc = e.engine === "osdc";
+    var inner = dicts.map(function (d) {
+      var rows = d.attrs.map(function (a) {
+        var ref = d.name + "!" + a.name;
+        var inp = a.writable
+          ? '<input type="text" data-dattr="' + esc(a.name) + '" value="' +
+            esc(fmt(a.value)) + '"' + (a.formula ? " disabled" : "") + '>'
+          : '<span class="ro">' + esc(fmt(a.value)) + '</span>';
+        return secRow(e, ref, a.name,
+          ref + (a.writable ? "" : " - structured value, read-only"),
+          inp, osdc && a.writable, a);
+      }).join("");
+      return '<details class="dictgroup" data-dg="' + esc(d.name) + '">' +
+        '<summary>' + esc(d.name) +
+        ' <span class="downer">' + esc(d.owner) + '</span></summary>' +
+        rows + '</details>';
+    }).join("");
+    return '<details class="foldsec dictsec" data-fold="dicts">' +
+      '<summary>Attribute dictionaries <span class="fcount">' + dicts.length +
+      '</span></summary>' + inner + '</details>';
   }
 
   function renderParam(e, p, advanced) {
@@ -569,6 +671,36 @@ window.OpenDC = (function () {
           name: inp.value
         });
       });
+    });
+
+    // Native SketchUp properties (sketchup! scope) - write-through edits.
+    host.querySelectorAll("input[data-skprop]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        send("setEntityProp", {
+          entityId: inp.closest(".card").getAttribute("data-eid"),
+          name: inp.getAttribute("data-skprop"),
+          value: inp.value
+        });
+      });
+    });
+
+    // Foreign-dictionary scalar keys - write back to the owning dict.
+    host.querySelectorAll("input[data-dattr]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        send("setDictAttr", {
+          entityId: inp.closest(".card").getAttribute("data-eid"),
+          dict: inp.closest(".dictgroup").getAttribute("data-dg"),
+          name: inp.getAttribute("data-dattr"),
+          value: inp.value
+        });
+      });
+    });
+
+    // <details> open state survives re-render (state pushes rebuild the DOM).
+    host.querySelectorAll(".foldsec, .dictgroup").forEach(function (det) {
+      var k = foldKey(det.closest(".card"), det);
+      if (openFolds[k]) det.open = true;
+      det.addEventListener("toggle", function () { openFolds[k] = det.open; });
     });
 
     host.querySelectorAll("[data-add]").forEach(function (btn) {
@@ -996,7 +1128,7 @@ window.OpenDC = (function () {
     var sm = /([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)?$/.exec(upto);
     var e = fxEntity(ed.closest(".card"));
     var attrItems = (e.params || [])
-      .filter(function (p) { return !p.internal; })
+      .filter(function (p) { return !p.internal && p.name.indexOf("!") < 0; })
       .map(function (p) { return { label: p.name, insert: p.name, kind: "attr" }; });
     var seen = {};
     attrItems.forEach(function (i) { seen[i.insert.toLowerCase()] = true; });
@@ -1009,9 +1141,25 @@ window.OpenDC = (function () {
 
     if (sm) {
       var scope = sm[1].toLowerCase(), frag = (sm[2] || "").toLowerCase();
-      var pool = scope === "global"
-        ? (state.globals || []).map(function (g) { return { label: g.name, insert: g.name, kind: "glob" }; })
-        : attrItems.slice();
+      var pool;
+      if (scope === "global") {
+        pool = (state.globals || []).map(function (g) {
+          return { label: g.name, insert: g.name, kind: "glob" };
+        });
+      } else if (scope === "sketchup") {
+        pool = (state.skprops || []).map(function (n) {
+          return { label: n, insert: n, kind: "skp" };
+        });
+      } else {
+        var dd = (e.dictionaries || []).find(function (d) {
+          return d.name.toLowerCase() === scope;
+        });
+        pool = dd
+          ? dd.attrs
+              .filter(function (a) { return /^[a-z_][a-z0-9_]*$/i.test(a.name); })
+              .map(function (a) { return { label: a.name, insert: a.name, kind: "dict" }; })
+          : attrItems.slice();
+      }
       return { items: pool.filter(function (i) { return i.label.toLowerCase().indexOf(frag) === 0; }),
                frag: frag, scope: scope, node: ctx.node, upto: upto };
     }
@@ -1022,6 +1170,18 @@ window.OpenDC = (function () {
     var items = attrItems;
     (state.globals || []).forEach(function (g) {
       items.push({ label: "global!" + g.name, insert: "global!" + g.name, kind: "glob" });
+    });
+    (state.skprops || []).forEach(function (n) {
+      items.push({ label: "sketchup!" + n, insert: "sketchup!" + n, kind: "skp" });
+    });
+    (e.dictionaries || []).forEach(function (d) {
+      if (!/^[a-z_][a-z0-9_]*$/i.test(d.name)) return;
+      d.attrs.forEach(function (a) {
+        if (/^[a-z_][a-z0-9_]*$/i.test(a.name)) {
+          items.push({ label: d.name + "!" + a.name,
+                       insert: d.name + "!" + a.name, kind: "dict" });
+        }
+      });
     });
     (state.functions || []).forEach(function (n) {
       items.push({ label: n + "()", insert: n + "(", kind: "fn" });

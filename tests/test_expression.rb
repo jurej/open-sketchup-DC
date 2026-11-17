@@ -237,4 +237,21 @@ class TestExpression < Minitest::Test
     assert_in_delta 42.0, E.eval!('FACEAREA("Oak")', c), 1e-9
     assert_equal [["FACES", []], ["FACEAREA", ["Oak"]]], calls
   end
+
+  def test_dictattr_function
+    calls = []
+    dict = lambda { |d, k| calls << [d, k]; 10.5 }
+    c = ctx({}).merge(dict: dict)
+    assert_in_delta 10.5, E.eval!('DICTATTR("SU_InstanceSet","Price")', c), 1e-9
+    # dict/key arguments pass through verbatim - case-insensitive matching
+    # is the lookup's job, not the evaluator's
+    assert_equal [["SU_InstanceSet", "Price"]], calls
+    assert_in_delta 11.5, E.eval!('1+DICTATTR("d","k")', c), 1e-9
+  end
+
+  def test_dictattr_needs_context_and_arity
+    assert_raises(E::Error) { E.eval!('DICTATTR("a","b")', ctx({})) }
+    c = ctx({}).merge(dict: ->(_d, _k) { 1.0 })
+    assert_raises(E::Error) { E.eval!('DICTATTR("a")', c) }
+  end
 end

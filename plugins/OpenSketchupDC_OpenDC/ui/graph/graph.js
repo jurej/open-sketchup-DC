@@ -532,6 +532,16 @@
         return addItem("ref", "global!" + g);
       })));
     }
+    if ((pal.skprops || []).length) {
+      attrSubs.push(sub2("SketchUp props", pal.skprops.map(function (n) {
+        return addItem("ref", "sketchup!" + n);
+      })));
+    }
+    if ((pal.dicts || []).length) {
+      attrSubs.push(sub2("Dictionaries", pal.dicts.map(function (n) {
+        return addItem("ref", n);
+      })));
+    }
     var fns = pal.functions || [];
     var grouped = {};
     var fnSubs = (pal.fnGroups || []).map(function (pair) {

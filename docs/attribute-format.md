@@ -157,3 +157,95 @@ them so they are skipped where a stored attribute is required:
 `Engine.applied_values` (they must never drive the applier — a synthesized
 `rotx` would recompose the transform on every recompute),
 `ParamSet#editable` (batch intersection), and the dependency graph.
+
+## `sketchup!` — native entity properties (osdc formulas)
+
+`sketchup!<prop>` reads live SketchUp state; nothing is stored in either
+dictionary, so values always reflect the current model. The scope is
+reserved — a sibling node or dictionary named "sketchup" is unreachable
+via `name!` (use `DICTATTR` for the dict).
+
+| prop | source | writable |
+|---|---|---|
+| `name` | definition name (components) / entity name (groups) | yes — renames every instance |
+| `instname` | instance name (Entity Info "Name"), components only | yes |
+| `description` | definition / group description | yes |
+| `summary`, `itemcode`, `creator` | definition Info fields | yes — components only |
+| `layer` | assigned layer/tag name | yes — the layer must already exist |
+| `guid`, `persistentid`, `entityid`, `typename` | entity/definition ids | read-only |
+| `instances` | `definition.count_used_instances` | read-only |
+| `x y z lenx/y/z rotx/y/z hidden material` | same live values as the synthesized builtins | read-only here (write via adopted attributes) |
+
+`_name` (the DC node name `name!` refs resolve) is unrelated to
+`sketchup!name` — keep them distinct.
+
+Panel writes go straight to the entity/definition (`SkProps.write`),
+never through `DCWriter` — no dict adoption, so they can't drive the
+applier.
+
+## Attribute dictionaries — `dictname!key` and `DICTATTR`
+
+Every dictionary on the instance **and** its definition (any plugin's:
+`SU_InstanceSet` Advanced Attributes, `AppliedSchemaTypes`, etc., plus
+`dynamic_attributes`/`open_dc` themselves) is a reference scope:
+
+- `su_instanceset!price` — scope resolution order is `parent`/`global`/
+  `sketchup`, then sibling node name, **then** dictionary name
+  (case-insensitive). Nodes win name collisions.
+- `DICTATTR("dict name", "key")` — function form for dict names that
+  aren't valid identifiers (spaces, dots) or for explicit clarity.
+
+Key lookup is case-insensitive (`su_instanceset!price` finds `Price`).
+Reads return scalars; structured values (arrays, points, times)
+stringify so `&` concat still works. `sketchup!`, dict scopes and
+`DICTATTR` are osdc-only — the classic engine doesn't know them, so
+panel validation emits a hint when they appear in a
+`dynamic_attributes` formula.
+
+Panel writes (`setDictAttr`) update **existing scalar keys only** —
+missing dicts/keys and structured values are refused, and writes keep
+the existing value's type (numeric keys get numbers, boolean keys get
+booleans). The "Attribute dictionaries" foldable section lists every
+foreign dict on instance + definition; read-only rows mark structured
+values.
+
+## Driver attributes — fx on external targets
+
+A param whose **name contains `!`** is a *driver*: its formula doesn't
+produce a user attribute, it writes the computed value out to an
+external target on every recompute.
+
+| driver name | target |
+|---|---|
+| `sketchup!<prop>` | `SkProps.write` — a writable native property |
+| `<dict>!<key>` | `SkProps.set_dict_attr` — an existing scalar dict key |
+
+Storage is the ordinary meta cluster (`_sketchup!name_formula` etc.);
+the non-greedy `INPUT_META_RE` round-trips `!` in the base name, so
+drivers are discovered, evaluated, cached (`<sketchup!name>`) and
+error-flagged (`_sketchup!name_error`) like any formula attr. No user
+path can create `!` names (`addParam` is word-chars only), so the
+marker is unambiguous and drivers never appear as user attrs — the
+panel keeps them out of the params list entirely; the foldable
+sections own them (configure mode, osdc entities only).
+
+Apply semantics (`Applier.apply_drivers`):
+
+- only values the *current* eval produced are written —
+  `applied_values` drops drivers absent from `computed`, so a cleared
+  formula or eval error stops driving (the target keeps its last
+  value) instead of re-applying a stale cache;
+- unchanged values are skipped before writing, so a no-op recompute
+  doesn't dirty the model;
+- failures flag `_<name>_error` with an `apply: ` prefix — distinct
+  from eval errors, which are never overwritten or cleared by the
+  apply pass;
+- `sketchup!` wins the scope over a dictionary literally named
+  "sketchup" (that dict stays readable via `DICTATTR`).
+
+Clearing a driver's formula deletes the whole cluster (`delete_param`).
+Drivers are **osdc-only** — `cmd_set_meta` refuses them on classic
+entities, and Trimble's engine would never evaluate them anyway.
+Read-only props (guid, ids) and structured dict values get no fx
+affordance but remain usable as formula *inputs* via
+`sketchup!`/`dictname!` refs and the node palettes.

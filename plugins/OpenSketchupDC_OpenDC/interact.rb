@@ -76,7 +76,11 @@ module OpenSketchupDC
         dict_name = DCReader.dict_name_for(entity)
         ps = DCReader.read(entity, dict_name: dict_name)
         p = ps[name]
-        raise Expression::Error, "no attribute '#{name}'" if p.nil?
+        if p.nil?
+          return SkProps.value_of(entity, name, dict_name: dict_name) if SkProps.known?(name)
+
+          raise Expression::Error, "no attribute '#{name}'"
+        end
 
         return p.value if p.formula.to_s.strip.empty?
 
@@ -87,7 +91,8 @@ module OpenSketchupDC
                          get: ->(n) { param_value(path, n, model, seen.merge(key => true)) },
                          ref: ->(s, n) { resolve_ref(s, n, path, model) },
                          meta: ->(n, f) { (h = ps[n]&.to_h) && h[f] },
-                         env: Engine.env_for(path[-1], model))
+                         env: Engine.env_for(path[-1], model),
+                         dict: ->(dn, k) { SkProps.dict_value(entity, dn, k) })
       end
 
       def resolve_ref(scope, name, path, model)
@@ -102,17 +107,33 @@ module OpenSketchupDC
           raise Expression::Error, "no global attribute '#{name}'" if v.nil?
 
           v
+        when "sketchup"
+          SkProps.value_of(path[-1], name, dict_name: DCReader.dict_name_for(path[-1]))
         else
           ctx = path.length >= 2 ? path[-2] : nil
           sib = node_named(scope, ctx, path[-1], model)
-          raise Expression::Error, "no node named '#{scope}'" unless sib
+          if sib
+            dict_name = DCReader.dict_name_for(sib)
+            ps = DCReader.read(sib, dict_name: dict_name)
+            p = ps[name]
+            raise Expression::Error, "node '#{scope}' has no attribute '#{name}'" if p.nil?
 
-          dict_name = DCReader.dict_name_for(sib)
-          ps = DCReader.read(sib, dict_name: dict_name)
-          p = ps[name]
-          raise Expression::Error, "node '#{scope}' has no attribute '#{name}'" if p.nil?
+            return p.value
+          end
 
-          p.value
+          # Sibling nodes win the scope name; a dictionary on this entity
+          # (or its definition) is the fallback scope, e.g. su_instanceset!price.
+          if (fdict = SkProps.dict_named(path[-1], scope))
+            v = SkProps.dict_get(fdict, name)
+            if v.nil?
+              raise Expression::Error,
+                    "dictionary '#{SkProps.dict_name_of(fdict)}' has no attribute '#{name}'"
+            end
+
+            return SkProps.scalar?(v) ? v : v.to_s
+          end
+
+          raise Expression::Error, "no node named '#{scope}'"
         end
       end
 
@@ -155,6 +176,7 @@ module OpenSketchupDC
                          ref: ->(s, n) { resolve_ref(s, n, path, model) },
                          meta: ->(n, f) { (h = ps[n]&.to_h) && h[f] },
                          env: Engine.env_for(entity, model),
+                         dict: ->(dn, k) { SkProps.dict_value(entity, dn, k) },
                          fx: fx)
       end
 

@@ -18,6 +18,7 @@ module OpenSketchupDC
         apply_transform(entity, values, dict_name)
         apply_hidden(entity, values)
         apply_material(entity, values)
+        apply_drivers(entity, values, dict_name)
       end
 
       # Any transform attribute present in `values` is engine-controlled.
@@ -154,6 +155,67 @@ module OpenSketchupDC
           hex = m[1]
           Sketchup::Color.new(hex[0..1].to_i(16), hex[2..3].to_i(16), hex[4..5].to_i(16))
         end
+      end
+
+      # Driver attributes (sketchup!<prop>, <dict>!<key>): write the
+      # computed formula value out to the native property or foreign
+      # dictionary key. Each driver writes independently - one failure
+      # flags _<name>_error and doesn't abort the rest. Values that
+      # didn't change are skipped so a no-op recompute doesn't dirty the
+      # model. Engine drops formula-less drivers before this runs.
+      def apply_drivers(entity, values, dict_name)
+        values.each do |name, v|
+          target = SkProps.driver_target(name)
+          next if target.nil?
+
+          begin
+            kind, a, b = target
+            if kind == :sketchup
+              cur = begin
+                SkProps.value_of(entity, a, dict_name: dict_name)
+              rescue StandardError
+                nil
+              end
+              SkProps.write(entity, a, v) unless cur == v
+            else
+              dict = SkProps.dict_named(entity, a)
+              raise "no dictionary '#{a}'" if dict.nil?
+
+              cur = SkProps.dict_get(dict, b)
+              SkProps.set_dict_attr(entity, a, b, v) unless cur == v
+            end
+            clear_driver_error(entity, name, dict_name)
+          rescue StandardError => e
+            flag_driver_error(entity, name, e.message, dict_name)
+          end
+        end
+      end
+
+      # Apply errors share _<name>_error with eval errors - the prefix
+      # keeps them distinguishable so an eval message is never overwritten
+      # or cleared by the apply pass.
+      APPLY_ERR_PREFIX = "apply: ".freeze
+
+      def flag_driver_error(entity, name, msg, dict_name)
+        owner = DCWriter.owner_for(entity)
+        dict = DCReader.dict_of(owner, dict_name)
+        key = "_#{name}_error"
+        cur = DCReader.dict_get(dict, key)
+        return if cur && !cur.to_s.start_with?(APPLY_ERR_PREFIX)
+
+        owner.set_attribute(dict_name, key, "#{APPLY_ERR_PREFIX}#{msg}")
+      rescue StandardError
+        nil
+      end
+
+      def clear_driver_error(entity, name, dict_name)
+        owner = DCWriter.owner_for(entity)
+        dict = DCReader.dict_of(owner, dict_name)
+        key = "_#{name}_error"
+        cur = DCReader.dict_get(dict, key)
+        owner.set_attribute(dict_name, key, nil) if cur.to_s.start_with?(APPLY_ERR_PREFIX)
+      rescue StandardError
+        nil
       end
 
       def truthy(v)

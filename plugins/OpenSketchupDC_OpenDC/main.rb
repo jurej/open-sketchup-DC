@@ -12,6 +12,7 @@ module OpenSketchupDC
     Sketchup.require(File.join(PLUGIN_DIR, "core", "params"))
     Sketchup.require(File.join(PLUGIN_DIR, "core", "dc_reader"))
     Sketchup.require(File.join(PLUGIN_DIR, "core", "dc_writer"))
+    Sketchup.require(File.join(PLUGIN_DIR, "core", "sk_props"))
     Sketchup.require(File.join(PLUGIN_DIR, "core", "dc_bridge"))
     Sketchup.require(File.join(PLUGIN_DIR, "core", "expression"))
     Sketchup.require(File.join(PLUGIN_DIR, "core", "graph"))

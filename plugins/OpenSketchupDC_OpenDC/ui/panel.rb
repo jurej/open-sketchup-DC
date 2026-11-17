@@ -110,6 +110,8 @@ module OpenSketchupDC
         when "rename"        then cmd_rename(p)
         when "batchSet"      then cmd_batch_set(p)
         when "setInstName"   then cmd_set_inst_name(p)
+        when "setEntityProp" then cmd_set_entity_prop(p)
+        when "setDictAttr"   then cmd_set_dict_attr(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
@@ -173,6 +175,25 @@ module OpenSketchupDC
       def cmd_set_meta(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
+          if SkProps.driver_name?(p["name"])
+            # Drivers (sketchup!prop, dict!key) evaluate only under our
+            # engine - refuse to seed them into a classic dict, and treat
+            # an emptied formula as driver removal.
+            if dict_name == DC_DICT
+              push_error("'#{p['name']}' drives only under the Open DC " \
+                         "engine - convert the component first")
+              next
+            end
+            if p["field"] == "formula" && p["value"].to_s.strip.empty?
+              Helpers.undo_wrap(Sketchup.active_model,
+                                "Open DC: Remove driver #{p['name']}") do
+                DCWriter.delete_param(e, p["name"], dict_name: dict_name)
+              end
+              reevaluate(e, dict_name)
+              push_state
+              next
+            end
+          end
           if p["field"] == "formula" && !p["value"].to_s.strip.empty?
             v = validate_formula(e, p["value"].to_s, p["name"].to_s)
             unless v["ok"]
@@ -241,6 +262,32 @@ module OpenSketchupDC
           Helpers.undo_wrap(Sketchup.active_model, "Open DC: Rename instance") do
             e.name = p["name"].to_s
           end
+          push_state
+        end
+      end
+
+      # Native SketchUp property (sketchup!name, layer, description, ...):
+      # writes the entity/definition directly - nothing is stored in the
+      # DC dictionary. SkProps raises on read-only props.
+      def cmd_set_entity_prop(p)
+        with_entity(p["entityId"]) do |e|
+          Helpers.undo_wrap(Sketchup.active_model, "Open DC: Set #{p['name']}") do
+            SkProps.write(e, p["name"], p["value"])
+          end
+          Engine.mark_dirty(e) if DCReader.engine_of(e) == :osdc
+          push_state
+        end
+      end
+
+      # Foreign-dictionary value edit from the "Attribute dictionaries"
+      # section: existing scalar keys only (SkProps guards the rest).
+      def cmd_set_dict_attr(p)
+        with_entity(p["entityId"]) do |e|
+          Helpers.undo_wrap(Sketchup.active_model,
+                            "Open DC: Set #{p['dict']}!#{p['name']}") do
+            SkProps.set_dict_attr(e, p["dict"], p["name"], p["value"])
+          end
+          Engine.mark_dirty(e) if DCReader.engine_of(e) == :osdc
           push_state
         end
       end
@@ -341,10 +388,26 @@ module OpenSketchupDC
           next unless node[0] == :call
 
           fn = node[1]
-          next if Expression::FUNCTIONS.include?(fn)
-          next if allow_actions && Expression::Evaluator::ACTIONS.include?(fn)
+          if !Expression::FUNCTIONS.include?(fn) &&
+             !(allow_actions && Expression::Evaluator::ACTIONS.include?(fn))
+            errors << "unknown function '#{fn}'"
+            next
+          end
+          # DICTATTR("dict","key") with literal arguments can be checked
+          # against this entity's dictionaries right here.
+          next unless fn == "DICTATTR" &&
+                      node[2].length == 2 && node[2].all? { |a| a[0] == :str }
 
-          errors << "unknown function '#{fn}'"
+          dn, key = node[2].map { |a| a[1].to_s }
+          if (fd = SkProps.dict_named(entity, dn))
+            unless SkProps.dict_key?(fd, key)
+              hints << "dictionary '#{SkProps.dict_name_of(fd)}' has no " \
+                       "attribute '#{key}' (it may appear later)"
+            end
+            hints << osdc_only("DICTATTR", dict_name)
+          else
+            errors << "no dictionary named '#{dn}'"
+          end
         end
 
         names = ps.params.map(&:name)
@@ -363,18 +426,39 @@ module OpenSketchupDC
             errors << "no global attribute '#{n}'" unless DCReader.dict_key?(g, n)
           when "parent"
             hints << "parent!#{n} resolves when this component is nested - not verified here"
+          when "sketchup"
+            errors << "unknown SketchUp attribute '#{n}'" unless SkProps.known?(n)
+            hints << osdc_only("sketchup!#{n}", dict_name)
           else
             node = top_level?(entity) &&
                    Interact.node_named(scope, nil, entity, Sketchup.active_model)
             if node.nil?
-              hints << "node '#{scope}' not verified here"
+              if (fd = SkProps.dict_named(entity, scope))
+                unless SkProps.dict_key?(fd, n)
+                  hints << "dictionary '#{SkProps.dict_name_of(fd)}' has no " \
+                           "attribute '#{n}' (it may appear later)"
+                end
+                hints << osdc_only("#{scope}!#{n}", dict_name)
+              else
+                hints << "node '#{scope}' not verified here"
+              end
             else
               nps = DCReader.read(node, dict_name: DCReader.dict_name_for(node))
               errors << "node '#{scope}' has no attribute '#{n}'" if nps[n].nil?
             end
           end
         end
+        hints.compact!
         { "ok" => errors.empty?, "errors" => errors.uniq, "hints" => hints.uniq }
+      end
+
+      # sketchup!/dictname!/DICTATTR evaluate only under our engine - in a
+      # classic formula Trimble's engine would fail them, so warn (not
+      # block) when the target dict is dynamic_attributes.
+      def osdc_only(what, dict_name)
+        return nil unless dict_name == DC_DICT
+
+        "'#{what}' resolves under the Open DC engine only"
       end
 
       # Units whose values must parse as numbers (length, angle, plain
@@ -618,6 +702,8 @@ module OpenSketchupDC
           ["parent!name", "attribute on the parent component"],
           ["global!name", "model-global attribute (open_dc)"],
           ["node!name", "attribute on a sibling node"],
+          ["sketchup!name", "native property: name, instname, description, layer, guid, x, lenx, ..."],
+          ["dictname!key", "attribute-dictionary value (any dict on this component)"],
           ["copy", "index of this generated copy (when copies &gt; 0)"]
         ]],
         ["Logical", [
@@ -666,7 +752,8 @@ module OpenSketchupDC
           ["EDGES() / FACES()", "ungrouped edge / face count in this component"],
           ["FACEAREA(\"material\")", "face area in square inches (material optional)"],
           ["LAT() / LNG()", "model latitude / longitude"],
-          ["SUNANGLE() / SUNELEVATION()", "sun azimuth / altitude"]
+          ["SUNANGLE() / SUNELEVATION()", "sun azimuth / altitude"],
+          ["DICTATTR(\"dict\", \"key\")", "dictionary value by name - when the dict name isn't a valid scope"]
         ]],
         ["Actions (onClick only)", [
           ["SET(\"name\", v1, v2, ...)", "cycle the attribute through the values"],
@@ -799,8 +886,10 @@ module OpenSketchupDC
           "entityId" => eid,
           "graph" => entity_graph(ps),
           "palette" => {
-            "attrs" => ps.names,
+            "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
+            "skprops" => SkProps::PROP_NAMES,
+            "dicts" => dict_scope_names(ent),
             "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
             "functions" => Expression::FUNCTIONS,
             "actions" => Expression::Evaluator::ACTIONS,
@@ -932,8 +1021,10 @@ module OpenSketchupDC
             "label" => "#{entity_label(ent)} :: #{p['name']}",
             "formula" => param ? param.formula.to_s : "",
             "graph" => graph,
-            "attrs" => ps.names,
+            "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
+            "skprops" => SkProps::PROP_NAMES,
+            "dicts" => dict_scope_names(ent),
             "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
             "functions" => Expression::FUNCTIONS,
             "actions" => Expression::Evaluator::ACTIONS,
@@ -1187,6 +1278,7 @@ module OpenSketchupDC
           "functions" => Expression::FUNCTIONS,
           "actions" => Expression::Evaluator::ACTIONS,
           "builtins" => DCReader::BUILTIN_ATTRS,
+          "skprops" => SkProps::PROP_NAMES,
           "globals" => global_params(model),
           "entities" => sets.each_with_index.map do |ps, i|
             h = ps.to_h
@@ -1195,10 +1287,45 @@ module OpenSketchupDC
             h["engine"] = ps.engine.to_s
             h["dynamic"] = DCReader.dynamic?(ts[i])
             h["graph"] = entity_graph(ps)
+            h["sketchup"] = skprop_rows(ts[i], ps)
+            h["dictionaries"] = dict_rows(ts[i], ps)
             h
           end,
           "batch" => batch_state(sets, ts)
         }
+      end
+
+      # Section rows for the foldable "SketchUp" section: live properties
+      # plus any stored driver formula (sketchup!<prop>) and its error.
+      def skprop_rows(entity, ps)
+        SkProps.list(entity).map do |row|
+          p = ps["sketchup!#{row['name']}"]
+          row.merge("formula" => p&.formula.to_s, "error" => p&.error.to_s)
+        end
+      end
+
+      # Same for the "Attribute dictionaries" section (<dict>!<key> drivers).
+      def dict_rows(entity, ps)
+        SkProps.dictionaries(entity).map do |d|
+          d.merge("attrs" => d["attrs"].map do |a|
+            p = ps["#{d['name']}!#{a['name']}"]
+            a.merge("formula" => p&.formula.to_s, "error" => p&.error.to_s)
+          end)
+        end
+      end
+
+      # "dictname!key" strings for node-editor palettes: only pairs that
+      # are valid scope!key syntax (both sides ident-safe). Exotic names
+      # stay reachable via DICTATTR("dict", "key").
+      def dict_scope_names(entity)
+        ident = /\A[a-z_][a-z0-9_]*\z/i
+        SkProps.dictionaries(entity).flat_map do |d|
+          next [] unless d["name"] =~ ident
+
+          d["attrs"].filter_map do |a|
+            "#{d['name']}!#{a['name']}" if a["name"] =~ ident
+          end
+        end
       end
 
       # Batch edits only make sense across already-dynamic targets - a

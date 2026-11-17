@@ -33,8 +33,13 @@ repo's `AGENTS.md` first — all conventions apply here.
 
 - `core/params.rb`, `core/expression.rb`, `core/graph.rb` are pure Ruby —
   no SketchUp API references at load time or in tests. Keep them that way.
+  `expression.rb` stays pure by taking entity access through ctx hooks —
+  `dict:` for `DICTATTR` — wired up in `Engine`/`Interact`.
 - `DCReader`/`DCWriter` accept `Sketchup::AttributeDictionary` OR plain
   `Hash` — the unit tests use Hashes.
+- `core/sk_props.rb` owns `sketchup!` native-property reads/writes and
+  foreign attribute-dictionary access; its lookup helpers work on plain
+  Hashes for tests.
 - All model modifications go through `Helpers.undo_wrap`.
 - The panel module is `Panel` (`ui/panel.rb`), not `UI`.
 
