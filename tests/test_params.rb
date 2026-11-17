@@ -87,6 +87,20 @@ class TestParams < Minitest::Test
     assert_equal %w[e1 e2], shared[0]["entityIds"]
   end
 
+  # Synthesized SketchUp attributes (x, lenx, rotz, ...) are editable like
+  # real params but must stay out of the batch-edit intersection.
+  def test_builtin_param_excluded_from_batch
+    p1 = DC::Param.new("w", value: 1.0, access: "TEXTBOX")
+    pb = DC::Param.new("lenx", value: 24.0, access: "TEXTBOX", builtin: true)
+    ps1 = DC::ParamSet.new(params: [p1, pb], entity_id: "e1")
+
+    assert_equal true, pb.builtin?
+    assert_equal true, pb.to_h["builtin"]
+    assert_equal true, pb.editable? # per-param edit still allowed
+    shared = DC::Selection.shared_params([ps1])
+    assert_equal %w[w], shared.map { |h| h["name"] }
+  end
+
   def test_batch_single_set_not_mixed
     p1 = DC::Param.new("w", value: 1.0, access: "TEXTBOX")
     ps1 = DC::ParamSet.new(params: [p1], entity_id: "e1")
@@ -136,6 +150,79 @@ class TestParams < Minitest::Test
     assert_in_delta 80.0, DC::Param.inches_to_unit(31.496, "CENTIMETERS"), 0.001
     assert(DC::Param.length_unit?("CENTIMETERS"))
     refute(DC::Param.length_unit?("STRING"))
+  end
+
+  # _<attr>_units = "DEFAULT" is classic's "End user's model units": the
+  # reader supplies model_units and display resolves to it; unresolved it
+  # stays a pass-through (pure builds, tests).
+  def test_default_units_resolve_to_model_units
+    dict = { "cokel" => "3.937007874015748",
+             "_cokel_access" => "TEXTBOX",
+             "_cokel_units" => "DEFAULT" }
+
+    ps = R.build(nil, dict, kind: :group, model_units: "CENTIMETERS")
+    p = ps["cokel"]
+    assert_equal "CENTIMETERS", p.display_units
+    assert_in_delta 10.0, p.display_value, 0.001
+    assert_equal "CENTIMETERS", p.to_h["displayUnits"]
+    assert_in_delta 10.0, p.display_default, 0.001
+    assert(DC::Param.model_units_dependent?(p.units))
+    refute(DC::Param.model_units_dependent?("STRING"))
+
+    ps2 = R.build(nil, dict, kind: :group)
+    p2 = ps2["cokel"]
+    assert_equal "DEFAULT", p2.display_units
+    assert_equal "3.937007874015748", p2.display_value
+
+    mm = R.build(nil, dict, kind: :group, model_units: "MILLIMETERS")["cokel"]
+    assert_in_delta 100.0, mm.display_value, 0.001
+  end
+
+  # model_length_units takes an entity OR the model directly - panel.rb
+  # calls it with Sketchup.active_model, which has no #model.
+  def test_model_length_units_entity_or_model
+    fake_model = Object.new
+    fake_model.define_singleton_method(:options) do
+      { "UnitsOptions" => { "LengthUnit" => 3 } }
+    end
+    fake_entity = Object.new
+    fake_entity.define_singleton_method(:model) { fake_model }
+
+    assert_equal "CENTIMETERS", R.model_length_units(fake_entity)
+    assert_equal "CENTIMETERS", R.model_length_units(fake_model)
+    assert_nil R.model_length_units(Object.new)
+  end
+
+  # A builtin adopted by writing only _x_formula (the classic value slot)
+  # surfaces as a real attribute before the engine writes an x cache.
+  def test_meta_only_attr_detected
+    inst = { "_x_formula" => "50" }
+    ps = R.build(DEF_DICT, inst, kind: :component)
+    x = ps["x"]
+    refute_nil x
+    assert_equal "50", x.formula
+    # builtin unit defaults kick in when no _x_units/_x_formulaunits exist
+    assert_equal "INCHES", x.formulaunits
+    assert_equal "DEFAULT", x.units
+  end
+
+  # _inst__<attr>_<meta> clusters on the instance dict mark an attr too.
+  def test_nested_meta_only_attr_detected
+    inst = { "_inst__y_formula" => "10" }
+    ps = R.build(DEF_DICT, inst, kind: :component)
+    refute_nil ps["y"]
+    assert_equal "10", ps["y"].formula
+  end
+
+  # System keys ending in a meta-field name (_lengthunits -> "length")
+  # must not be mistaken for attribute clusters; engine status keys
+  # (_error/_display/_nominal) never mark an attr by themselves.
+  def test_meta_only_system_keys_ignored
+    dict = { "_lengthunits" => "INCHES", "_hasbehaviors" => 1.0,
+             "_ghost_error" => "boom", "_ghost_nominal" => 5.0 }
+    ps = R.build(nil, dict, kind: :group)
+    assert_nil ps["length"]
+    assert_nil ps["ghost"]
   end
 
   def test_options_stray_ampersands

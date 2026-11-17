@@ -12,9 +12,11 @@ window.OpenDC = (function () {
   var fxReq = {};     // entityId::name -> last validation request id
   var fxValid = {};   // entityId::name -> last validation ok flag (true/false/undefined)
   var fxReqSeq = 0;
+  var entsFolded = true; // multi-select: per-entity cards folded behind a summary
 
-  // Classic DC _<name>_units vocabulary + display suffixes.
-  var DC_UNITS = ["INCHES", "CENTIMETERS", "MILLIMETERS", "METERS", "FEET",
+  // Classic DC _<name>_units vocabulary + display suffixes. DEFAULT is
+  // native "End user's model units" - resolved server-side per param.
+  var DC_UNITS = ["DEFAULT", "INCHES", "CENTIMETERS", "MILLIMETERS", "METERS", "FEET",
                   "DEGREES", "RADIANS", "DECIMAL", "FLOAT", "INTEGER",
                   "PERCENT", "BOOLEAN", "STRING", "TEXT",
                   "DOLLARS", "EUROS", "YEN"];
@@ -24,7 +26,27 @@ window.OpenDC = (function () {
   };
 
   function unitSuffix(p) {
-    return UNIT_SUFFIX[(p.units || "").toUpperCase()] || "";
+    var u = (p.displayUnits || p.units || "").toUpperCase();
+    return UNIT_SUFFIX[u] || "";
+  }
+
+  // Formatted display strings (model-units attrs) already carry the unit.
+  function paramSuffix(p) {
+    return p.displayString ? "" : unitSuffix(p);
+  }
+
+  // What a param's value input/label shows: model-format string when the
+  // reader produced one (DEFAULT units), else unit-converted number.
+  function displayOf(p) {
+    if (p.mixed) return "";
+    if (p.displayString != null) return p.displayString;
+    return p.displayValue != null ? p.displayValue : p.value;
+  }
+
+  function defaultOf(p) {
+    if (p.displayDefaultString != null) return p.displayDefaultString;
+    if (p.displayDefault != null) return p.displayDefault;
+    return p["default"];
   }
 
   function unitSelect(field, cur) {
@@ -33,7 +55,9 @@ window.OpenDC = (function () {
     return '<select data-f="' + field + '">' +
       '<option value="">(none)</option>' +
       opts.map(function (u) {
-        return '<option' + (u === cur ? " selected" : "") + ">" + u + "</option>";
+        var label = u === "DEFAULT" ? "model units" : u;
+        return '<option value="' + u + '"' + (u === cur ? " selected" : "") + ">" +
+          label + "</option>";
       }).join("") + "</select>";
   }
 
@@ -97,10 +121,11 @@ window.OpenDC = (function () {
 
     var q = filter();
     var rows = b.shared.filter(function (p) { return match(p, q); }).map(function (p) {
+      var suf = paramSuffix(p);
       return '<div class="prow">' +
         '<span class="pname" title="' + esc(p.name) + '"><b>' + esc(p.displayName) + '</b></span>' +
         '<span>' + inputFor(p, "batch",
-          unitSuffix(p) ? ' <span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span>' +
+          suf ? ' <span class="pun">' + esc(suf) + '</span>' : "") + '</span>' +
         '</div>';
     }).join("");
 
@@ -122,7 +147,7 @@ window.OpenDC = (function () {
   function renderEntities(ents) {
     var host = document.getElementById("entities");
     var q = filter();
-    host.innerHTML = ents.map(function (e) {
+    var cards = ents.map(function (e) {
       var cfg = configMode;
       var params = (e.params || []).filter(function (p) {
         return cfg ? match(p, q) : (match(p, q) && p.access !== "NONE" && !p.internal);
@@ -134,16 +159,20 @@ window.OpenDC = (function () {
             ' title="Component name (writes _name)">'
           : '<span class="name" title="' + esc(e.label) + '">' + esc(e.label) + '</span>') +
         '<span class="badge kind">' + esc(e.kind) + '</span>' +
-        '<span class="badge ' + (e.engine === "osdc" ? "osdc" : "") + '">' +
-          (e.engine === "osdc" ? "Open DC" : "Classic") + '</span>' +
-        (cfg ? '<button class="small ghost-acc" data-graph title="Dependency graph">⤢</button>' : "") +
-        (cfg
+        '<span class="badge ' + (e.engine === "osdc" ? "osdc" : (e.dynamic === false ? "static" : "")) + '">' +
+          (e.engine === "osdc" ? "Open DC" : (e.dynamic === false ? "Static" : "Classic")) + '</span>' +
+        (cfg ? '<button class="small ghost-acc" data-graph title="Dependency graph"' +
+          ' aria-label="Dependency graph"><i class="modus-icon-graph" aria-hidden="true"></i></button>' : "") +
+        (cfg && e.dynamic !== false
           ? (e.engine === "osdc"
-            ? '<button class="small danger" data-act="revert">Revert</button>'
-            : '<button class="small primary" data-act="convert">Convert</button>')
+            ? '<button class="small danger" data-act="revert" ' +
+              'title="Revert this component to classic Dynamic Components">Revert</button>'
+            : '<button class="small primary" data-act="convert" ' +
+              'title="Convert this component to Open DC">Convert</button>')
           : "") +
         '</header>' +
         '<div class="params">' +
+        instNameRow(e) +
         params.map(function (p, i) {
           var sec = p.section || "";
           var hdr = "";
@@ -161,6 +190,11 @@ window.OpenDC = (function () {
                     '</div>';
             }
           }
+          // built-in SketchUp attributes live under their own labeled
+          // divider - read-only section chrome, not an _itemorder marker
+          if (p.builtin && !(params[i - 1] && params[i - 1].builtin)) {
+            hdr = '<div class="section"><span class="secname">SketchUp</span></div>';
+          }
           // Insert-divider strips (configure mode): above the first row
           // when it is unsectioned, and inside contiguous same-section
           // runs - a strip at an existing boundary would only make an
@@ -172,13 +206,40 @@ window.OpenDC = (function () {
             ? '<div class="secinsert" data-secins title="Insert a section divider here"></div>' : "";
           return insTop + hdr + renderParam(e, p, cfg) + insBot;
         }).join("") +
-        (params.length ? "" : '<div class="prow"><span class="pname">No parameters.</span></div>') +
+        (params.length ? "" : '<div class="prow"><span class="pname">' +
+          (e.dynamic === false ? "No attributes yet." : "No parameters.") + '</span></div>') +
         '</div>' +
         (cfg ? addFormHtml(e) : "") +
         '</div>';
     }).join("");
 
+    // Multi-select: the batch editor is the primary UI, so the per-entity
+    // cards fold behind a summary bar instead of filling the panel.
+    host.innerHTML = ents.length > 1
+      ? '<details id="entsfold"' + (entsFolded ? "" : " open") + '>' +
+        '<summary><span class="fcount">' + ents.length + '</span> ' +
+        'selected components</summary>' +
+        '<div class="foldbody">' + cards + '</div></details>'
+      : cards;
+
+    var fold = host.querySelector("#entsfold");
+    if (fold) {
+      fold.addEventListener("toggle", function () { entsFolded = !fold.open; });
+    }
+
     wireEntityCards(host);
+  }
+
+  // Pinned row for the SketchUp instance name (Entity Info "Name") -
+  // a plain instance property, unlike the DC _name node name edited via
+  // the header field in configure mode. Groups have no instance name.
+  function instNameRow(e) {
+    if (e.kind !== "component") return "";
+    return '<div class="prow instname">' +
+      '<span class="pname" title="SketchUp instance name (Entity Info) - ' +
+      'not the DC _name used for node! references"><b>Instance name</b></span>' +
+      '<span><input type="text" data-iname value="' + esc(e.instanceName || "") + '"' +
+      ' placeholder="(unnamed)"></span><span></span></div>';
   }
 
   function renderParam(e, p, advanced) {
@@ -186,14 +247,14 @@ window.OpenDC = (function () {
     var err = p.error ? '<div class="err">' + esc(p.error) + '</div>' : "";
     var key = id + "::" + p.name;
     var editOpen = openEdit[key] && advanced;
-    var suf = unitSuffix(p);
+    var suf = paramSuffix(p);
     var pun = suf ? ' <span class="pun">' + esc(suf) + '</span>' : "";
-    var grip = advanced && !p.internal
+    var grip = advanced && !p.internal && !p.builtin
       ? '<span class="grip" draggable="true" title="Drag to reorder">&#x2807;</span>'
       : "";
     var tip = advanced ? (p.tooltip || p.name) : (p.tooltip || "");
     var html = '<div class="prow' + (p.internal ? " internal" : "") + '"' +
-      (p.internal ? "" : ' data-pname="' + esc(p.name) + '"') + '>' +
+      (p.internal || p.builtin ? "" : ' data-pname="' + esc(p.name) + '"') + '>' +
       '<span class="pname"' + (tip ? ' title="' + esc(tip) + '"' : "") + '>' + grip +
       '<b>' + esc(p.displayName) + '</b>' +
       (p.tooltip ? ' <span class="tipdot">i</span>' : '') +
@@ -201,13 +262,14 @@ window.OpenDC = (function () {
       (p.overridden ? ' <span class="formula-hint">*</span>' : '') +
       '</span>' +
       '<span>' + (p.access === "VIEW" || p.internal
-        ? '<span class="ro">' + esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + pun + '</span>'
+        ? '<span class="ro">' + esc(fmt(displayOf(p))) + pun + '</span>'
         : inputFor(p, e.entityId, pun)) + '</span>' +
       '<span>' +
       (advanced && !p.internal
         ? '<button class="small' + (p.formula ? " fx-on" : "") + '" data-edit="' +
           esc(key) + '" data-name="' + esc(p.name) + '"' +
-          (p.formula ? ' title="Has formula: ' + esc(p.formula) + '"' : "") + '>fx</button>'
+          ' title="Edit attribute' +
+          (p.formula ? ' - formula: ' + esc(p.formula) : '') + '">fx</button>'
         : "") +
       '</span>' +
       err +
@@ -226,19 +288,20 @@ window.OpenDC = (function () {
       '<div class="full"><label>tooltip - hint shown when hovering the attribute</label>' +
       '<input data-f="tooltip" value="' + esc(p.tooltip || "") + '" ' +
       'placeholder="e.g. Door panel thickness"></div>' +
-      '<div class="full"><label>formula <button type="button" class="fxdocs" ' +
-      'data-fxdocs title="Function &amp; syntax reference">&#402;(x)</button>' +
-      '<button type="button" class="fxdocs" data-fxnodes="' + n + '" ' +
-      'title="Edit as node graph">&#x2A02;</button></label>' +
+      '<div class="full"><label>formula</label>' +
       '<div class="fxedit">' +
       '<div class="fxed" contenteditable="true" spellcheck="false" autocapitalize="off"></div>' +
       '<input type="hidden" data-f="formula" value="' + esc(p.formula || "") + '">' +
+      '<button type="button" class="fxbtn" data-fxdocs ' +
+      'title="Function &amp; syntax reference">&#402;(x)</button>' +
+      '<button type="button" class="fxbtn" data-fxnodes="' + n + '" ' +
+      'title="Edit as node graph"><i class="modus-icon-graph" aria-hidden="true"></i></button>' +
       '<div class="fxlist hidden"></div></div>' +
       '<div class="fxstatus"></div></div>' +
       '<div><label>default' + (p.formula ? " (formula-driven)" : "") + '</label>' +
-      '<span class="uwrap"><input data-f="default" value="' + esc(fmt(p["default"])) + '"' +
+      '<span class="uwrap"><input data-f="default" value="' + esc(fmt(defaultOf(p))) + '"' +
       (p.formula ? " disabled" : "") + '>' +
-      (unitSuffix(p) ? '<span class="pun">' + esc(unitSuffix(p)) + '</span>' : "") + '</span></div>' +
+      (paramSuffix(p) ? '<span class="pun">' + esc(paramSuffix(p)) + '</span>' : "") + '</span></div>' +
       '<div><label>display rule</label><select data-f="access">' +
       [["NONE", "hidden"], ["VIEW", "view only"], ["TEXTBOX", "edit"], ["LIST", "list"]]
         .map(function (a) {
@@ -247,14 +310,17 @@ window.OpenDC = (function () {
         }).join("") + '</select></div>' +
       '<div><label>units</label>' + unitSelect("units", p.units || "") + '</div>' +
       '<div><label>formula units</label>' + unitSelect("formulaunits", p.formulaunits || "") + '</div>' +
-      '<div class="full"><label>options - type Label or Label=value, Enter adds it</label>' +
+      '<div class="full"><label>options - type Label or Label=value, Enter adds it ' +
+      '&middot; click a chip to edit, drag to reorder</label>' +
       '<div class="opted" data-opted>' +
       (p.optionsList || []).map(function (o) { return optChipHtml(o.label, o.value); }).join("") +
       '<input class="optin" placeholder="Label=value">' +
       '</div><input type="hidden" data-f="options" value="' + esc(p.options || "") + '"></div>' +
       '<div class="full row-actions">' +
-      '<button class="small danger" data-del="' + n + '">Delete</button>' +
-      '<button class="small confirm" data-save="' + n + '">Apply</button>' +
+      (p.builtin ? "" : '<button class="small danger" data-del="' + n + '" ' +
+        'title="Delete this attribute">Delete</button>') +
+      '<button class="small confirm" data-save="' + n + '" ' +
+      'title="Apply changes to this attribute">Apply</button>' +
       '</div>' +
       '</div>';
   }
@@ -279,7 +345,7 @@ window.OpenDC = (function () {
         }).join("") + '</select>';
     }
     return '<span class="uwrap"><input type="text" value="' +
-      esc(fmt(p.displayValue != null ? p.displayValue : p.value)) + '"' + data + ph + '>' +
+      esc(fmt(displayOf(p))) + '"' + data + ph + '>' +
       (pun || "") + '</span>';
   }
 
@@ -287,16 +353,24 @@ window.OpenDC = (function () {
   // Chips of Label=value with an inline input; serialized to the hidden
   // data-f="options" input as classic `l=v&l=v` on every change.
 
+  function optShow(label, value) {
+    return String(value) === String(label) ? label : label + "=" + value;
+  }
+
   function optChipHtml(label, value) {
-    var show = String(value) === String(label) ? label : label + "=" + value;
-    return '<span class="optchip"><span class="optlabel">' + esc(show) + '</span>' +
+    return '<span class="optchip" draggable="true" ' +
+      'title="Drag to reorder - click the label to edit">' +
+      '<span class="optlabel">' + esc(optShow(label, value)) + '</span>' +
       '<button type="button" class="optx" title="Remove option">&times;</button></span>';
   }
 
   function optSync(box) {
     var pairs = [];
     box.querySelectorAll(".optchip").forEach(function (c) {
-      pairs.push(c.querySelector(".optlabel").textContent);
+      var lab = c.querySelector(".optlabel");
+      var ed = c.querySelector(".optedit");
+      var t = lab ? lab.textContent : (ed ? ed.value : "");
+      if (t.trim()) pairs.push(t.trim());
     });
     box.parentElement.querySelector('input[data-f="options"]').value = pairs.join("&");
   }
@@ -323,6 +397,44 @@ window.OpenDC = (function () {
     return added;
   }
 
+  // Swap a chip's label for an inline input (mirrors the section rename);
+  // Enter/blur commits re-normalized "Label" or "Label=value", Escape reverts.
+  function optEditStart(box, lab) {
+    var cur = lab.textContent;
+    var inp = document.createElement("input");
+    inp.className = "optedit";
+    inp.value = cur;
+    inp.size = Math.max(4, cur.length);
+    lab.replaceWith(inp);
+    inp.focus();
+    inp.select();
+    function commit(save) {
+      if (!inp.parentNode) return;
+      var v = inp.value.trim();
+      inp.replaceWith(lab);
+      if (!save || v === "" || v === cur) return;
+      var eq = v.indexOf("=");
+      var label = eq === -1 ? v : v.slice(0, eq).trim();
+      var value = eq === -1 ? v : v.slice(eq + 1).trim();
+      if (!label) return;
+      lab.textContent = optShow(label, value || label);
+      optSync(box);
+    }
+    inp.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") commit(true);
+      else if (e.key === "Escape") commit(false);
+      e.stopPropagation();
+    });
+    inp.addEventListener("blur", function () { commit(true); });
+  }
+
+  function clearOptMarks(box) {
+    box.querySelectorAll(".optchip.drop-before, .optchip.drop-after").forEach(function (c) {
+      c.classList.remove("drop-before", "drop-after");
+    });
+    box._dropChip = null;
+  }
+
   function wireOptionEditors(host) {
     host.querySelectorAll("[data-opted]").forEach(function (box) {
       var input = box.querySelector(".optin");
@@ -342,10 +454,57 @@ window.OpenDC = (function () {
       input.addEventListener("blur", function () { optCommit(input); });
       // delegated so chips added later are covered too
       box.addEventListener("click", function (ev) {
+        var lab = ev.target.closest(".optlabel");
+        if (lab) { optEditStart(box, lab); return; }
         if (ev.target.closest(".optx")) {
           ev.target.closest(".optchip").remove();
           optSync(box);
         }
+      });
+      // horizontal drag-reorder inside this chip list (like .grip on rows);
+      // stopPropagation keeps the .params row-drag handlers out of it
+      box.addEventListener("dragstart", function (ev) {
+        var chip = ev.target.closest(".optchip");
+        if (!chip || !box.contains(chip)) return;
+        ev.dataTransfer.effectAllowed = "move";
+        ev.dataTransfer.setData("text/plain", chip.textContent.trim());
+        ev.dataTransfer.setDragImage(chip, 8, 8);
+        chip.classList.add("dragging");
+      });
+      box.addEventListener("dragover", function (ev) {
+        if (!box.querySelector(".optchip.dragging")) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.dataTransfer.dropEffect = "move";
+        clearOptMarks(box);
+        var chip = ev.target.closest(".optchip");
+        if (chip && !chip.classList.contains("dragging")) {
+          var r = chip.getBoundingClientRect();
+          var before = ev.clientX < r.left + r.width / 2;
+          chip.classList.add(before ? "drop-before" : "drop-after");
+          box._dropChip = chip;
+          box._dropBefore = before;
+        }
+      });
+      box.addEventListener("drop", function (ev) {
+        var src = box.querySelector(".optchip.dragging");
+        if (!src) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        var dst = box._dropChip;
+        if (dst && src !== dst) {
+          box.insertBefore(src, box._dropBefore ? dst : dst.nextSibling);
+        } else if (!dst) {
+          box.insertBefore(src, input); // open space drops at the end
+        }
+        optSync(box);
+        clearOptMarks(box);
+      });
+      box.addEventListener("dragend", function () {
+        box.querySelectorAll(".optchip.dragging").forEach(function (c) {
+          c.classList.remove("dragging");
+        });
+        clearOptMarks(box);
       });
     });
   }
@@ -360,10 +519,12 @@ window.OpenDC = (function () {
         '<option value="TEXTBOX">edit</option><option value="LIST">list</option>' +
         '<option value="VIEW">view only</option><option value="NONE">hidden</option></select>' +
         '<input name="value" placeholder="default value">' +
-        '<button type="submit" class="primary">Add</button>' +
-        '<button type="button" class="small" data-addcancel="' + id + '">✕</button></form>';
+        '<button type="submit" class="primary" title="Add the attribute">Add</button>' +
+        '<button type="button" class="small" data-addcancel="' + id + '" ' +
+        'title="Cancel without adding">✕</button></form>';
     }
-    return '<div class="addrow"><button class="addbtn" data-add="' + id + '">+ Add attribute</button></div>';
+    return '<div class="addrow"><button class="addbtn" data-add="' + id + '" ' +
+      'title="Add a new attribute to this component">+ Add attribute</button></div>';
   }
 
   /* ---------------- events ---------------- */
@@ -396,6 +557,16 @@ window.OpenDC = (function () {
           entityId: card.getAttribute("data-eid"),
           name: inp.getAttribute("data-name"),
           value: inp.value
+        });
+      });
+    });
+
+    host.querySelectorAll("input[data-iname]").forEach(function (inp) {
+      inp.addEventListener("change", function () {
+        var card = inp.closest(".card");
+        send("setInstName", {
+          entityId: card.getAttribute("data-eid"),
+          name: inp.value
         });
       });
     });
@@ -557,6 +728,7 @@ window.OpenDC = (function () {
       box.addEventListener("dragover", function (ev) {
         var row = ev.target.closest(".prow[data-pname]");
         if (!row || row.classList.contains("dragging")) return;
+        if (!box.querySelector(".prow.dragging, .section.dragging")) return;
         ev.preventDefault();
         ev.dataTransfer.dropEffect = "move";
         var r = row.getBoundingClientRect();
@@ -568,7 +740,7 @@ window.OpenDC = (function () {
       });
       box.addEventListener("drop", function (ev) {
         ev.preventDefault();
-        var src = box.querySelector(".dragging");
+        var src = box.querySelector(".prow.dragging, .section.dragging");
         var dst = box._dropRow;
         if (src && dst && src !== dst) {
           box.insertBefore(src, box._dropBefore ? dst : dst.nextSibling);
@@ -1015,7 +1187,9 @@ window.OpenDC = (function () {
   });
   document.getElementById("btn-refresh").addEventListener("click", function () { send("refresh"); });
   document.getElementById("btn-redraw").addEventListener("click", function () {
-    send("redraw", { entityIds: (state.entities || []).map(function (e) { return e.entityId; }) });
+    send("redraw", { entityIds: (state.entities || [])
+      .filter(function (e) { return e.dynamic !== false; })
+      .map(function (e) { return e.entityId; }) });
   });
 
   document.addEventListener("DOMContentLoaded", function () { send("ready"); });

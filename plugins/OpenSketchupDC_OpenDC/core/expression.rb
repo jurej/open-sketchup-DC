@@ -14,14 +14,15 @@ module OpenSketchupDC
     #   math:    + - * / % ^ ( )
     #   compare: = <> < > <= >=   logic: AND OR NOT
     #   refs:    attr  parent!attr  global!attr  siblingname!attr
-    #   funcs:   IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
-    #            SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
-    #            LARGEST SMALLEST OPTIONINDEX OPTIONVALUE
+    #   funcs:   the classic DC catalogue - math, text, trig, logical,
+    #            SketchUp-model and option functions (see FUNCTIONS)
     #
     # Context protocol (injected by the engine):
     #   get:  ->(name)        # sibling attribute on same entity
     #   ref:  ->(scope, name) # parent!/global!/name! references
-    #   meta: ->(name, field) # attribute meta (for OPTIONINDEX/OPTIONVALUE)
+    #   meta: ->(name, field) # attribute meta (for OPTION*/CURRENT)
+    #   env:  ->(fn, args)    # model functions (EDGES LAT SUNANGLE ...)
+    #   fx:   ->(fn, args)    # onClick actions (SET ANIMATE* ...)
     module Expression
       class Error < StandardError; end
 
@@ -82,10 +83,10 @@ module OpenSketchupDC
             m = s.match(/\G[A-Za-z_][A-Za-z0-9_]*/, i)
             word = m[0]
             i += word.length
+            # TRUE/FALSE stay idents so `TRUE()` can parse as a call;
+            # ident_expr folds the bare word back to a number literal.
             tokens << case word.upcase
                       when "AND", "OR", "NOT" then Token.new(:op, word.upcase)
-                      when "TRUE"  then Token.new(:num, 1.0)
-                      when "FALSE" then Token.new(:num, 0.0)
                       else Token.new(:ident, word)
                       end
           when "!"
@@ -239,6 +240,14 @@ module OpenSketchupDC
           when :num then next! && [:num, t.value]
           when :str then next! && [:str, t.value]
           when :ident then ident_expr(t.value)
+          when :op
+            # AND(...) / OR(...) function form (NOT is handled in unary,
+            # where `NOT x` and `NOT(x)` already work).
+            if %w[AND OR].include?(t.value) && @t[@i + 1]&.type == :lparen
+              next!
+              return [:call, t.value, call_args]
+            end
+            raise Error, "unexpected #{Expression.describe_token(t)}"
           when :lparen
             next!
             e = expr
@@ -260,15 +269,22 @@ module OpenSketchupDC
 
             return [:ref, name.downcase, n2.value.downcase]
           end
-          if peek.type == :lparen
-            next!
-            args = []
-            args << expr unless peek.type == :rparen
-            args << expr while match_type(:comma)
-            expect(:rparen)
-            return [:call, name.upcase, args]
-          end
+          return [:call, name.upcase, call_args] if peek.type == :lparen
+
+          up = name.upcase
+          return [:num, up == "TRUE" ? 1.0 : 0.0] if %w[TRUE FALSE].include?(up)
+
           [:var, name.downcase]
+        end
+
+        # `(arg, arg, ...)` - the lparen is consumed here.
+        def call_args
+          expect(:lparen)
+          args = []
+          args << expr unless peek.type == :rparen
+          args << expr while match_type(:comma)
+          expect(:rparen)
+          args
         end
 
         def match_op(op)
@@ -294,12 +310,22 @@ module OpenSketchupDC
       # Evaluator
       # ------------------------------------------------------------------
 
-      # Pure formula functions the evaluator implements. Kept next to
-      # eval_call's dispatch for validation (formula builders reject unknown
-      # function names before the formula is stored).
-      FUNCTIONS = %w[IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
-                     SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
-                     LARGEST SMALLEST NEAREST OPTIONINDEX OPTIONVALUE].freeze
+      # Functions the evaluator understands (classic DC catalogue). Kept
+      # next to eval_call's dispatch for validation: formula builders reject
+      # unknown function names before the formula is stored.
+      FUNCTIONS = %w[
+        IF CHOOSE CURRENT
+        AND OR NOT TRUE FALSE
+        MIN MAX ROUND INT FLOOR CEILING ABS SQRT EXP LN LOG10 SIGN
+        EVEN ODD ISEVEN ISODD RAND RANDBETWEEN
+        PI DEGREES RADIANS
+        SIN COS TAN ASIN ACOS ATAN SINH COSH TANH ASINH ACOSH ATANH
+        CHAR CODE CONCATENATE DOLLAR EXACT FIND LEFT LEN LOWER MID PROPER
+        REPLACE REPT RIGHT SUBSTITUTE TRIM UPPER VALUE
+        LARGEST SMALLEST NEAREST
+        OPTIONINDEX OPTIONVALUE OPTIONLABEL
+        EDGES FACES FACEAREA LAT LNG SUNANGLE SUNELEVATION
+      ].freeze
 
       class Evaluator
         # DC action functions (side effects). Handled via ctx[:fx] - a pure
@@ -307,10 +333,16 @@ module OpenSketchupDC
         ACTIONS = %w[SET ANIMATE ANIMATESLOW ANIMATEFAST ANIMATECUSTOM
                      REDRAW ALERT GOTOSCENE].freeze
 
+        # Functions that read the SketchUp model rather than attribute
+        # values; resolved through ctx[:env].
+        ENV_FUNCTIONS = %w[EDGES FACES FACEAREA LAT LNG SUNANGLE
+                           SUNELEVATION].freeze
+
         def initialize(ctx = {})
           @get  = ctx[:get]  || ->(n) { raise Error, "undefined attribute '#{n}'" }
           @ref  = ctx[:ref]  || ->(s, n) { raise Error, "undefined reference '#{s}!#{n}'" }
           @meta = ctx[:meta] || ->(_n, _f) { nil }
+          @env  = ctx[:env]
           @fx   = ctx[:fx]
         end
 
@@ -377,36 +409,25 @@ module OpenSketchupDC
 
         def eval_call(fn, args)
           case fn
+          # ---- logic --------------------------------------------------------
           when "IF"
             raise Error, "IF needs 3 arguments" unless args.length == 3
 
             truthy(eval_node(args[0])) ? eval_node(args[1]) : eval_node(args[2])
+          when "AND"   then args.all? { |a| truthy(eval_node(a)) }
+          when "OR"    then args.any? { |a| truthy(eval_node(a)) }
+          when "NOT"   then !truthy(eval_node(args[0]))
+          # Match the bare literals, which fold to 1.0 / 0.0 - keeps
+          # `TRUE() = TRUE` comparisons and arithmetic consistent.
+          when "TRUE"  then 1.0
+          when "FALSE" then 0.0
+          # ---- SketchUp / option --------------------------------------------
           when "CHOOSE"
             raise Error, "CHOOSE needs >= 2 arguments" if args.length < 2
 
             idx = num(eval_node(args[0])).to_i.clamp(1, args.length - 1)
             eval_node(args[idx])
           when "CURRENT" then @get.call(arg_str(args[0]))
-          when "MIN", "MAX"
-            vals = args.map { |a| num(eval_node(a)) }
-            fn == "MIN" ? vals.min : vals.max
-          when "ROUND"
-            nd = args.length > 1 ? num(eval_node(args[1])).to_i : 0
-            num(eval_node(args[0])).round(nd).to_f
-          when "INT"     then num(eval_node(args[0])).to_i
-          when "FLOOR"   then num(eval_node(args[0])).floor
-          when "CEILING" then num(eval_node(args[0])).ceil
-          when "ABS"     then num(eval_node(args[0])).abs
-          when "SQRT"    then Math.sqrt(num(eval_node(args[0])))
-          when "SIN"     then Math.sin(num(eval_node(args[0])) * Math::PI / 180.0)
-          when "COS"     then Math.cos(num(eval_node(args[0])) * Math::PI / 180.0)
-          when "TAN"     then Math.tan(num(eval_node(args[0])) * Math::PI / 180.0)
-          when "ASIN"    then Math.asin(num(eval_node(args[0]))) * 180.0 / Math::PI
-          when "ACOS"    then Math.acos(num(eval_node(args[0]))) * 180.0 / Math::PI
-          when "ATAN"    then Math.atan(num(eval_node(args[0]))) * 180.0 / Math::PI
-          when "PI"      then Math::PI
-          when "DEGREES" then num(eval_node(args[0])) * 180.0 / Math::PI
-          when "RADIANS" then num(eval_node(args[0])) * Math::PI / 180.0
           when "LARGEST", "SMALLEST"
             raise Error, "#{fn} needs >= 2 arguments" if args.length < 2
 
@@ -430,7 +451,143 @@ module OpenSketchupDC
             label = eval_node(args[1]).to_s
             opt = option_list(an).find { |o| o[0] == label }
             opt && opt[1]
+          when "OPTIONLABEL"
+            an = arg_str(args[0])
+            cur = @get.call(an)
+            opt = option_list(an).find { |o| loose_eq(o[1], cur) }
+            opt && opt[0]
+          # ---- math -----------------------------------------------------------
+          when "MIN", "MAX"
+            vals = args.map { |a| num(eval_node(a)) }
+            fn == "MIN" ? vals.min : vals.max
+          when "ROUND"
+            nd = args.length > 1 ? num(eval_node(args[1])).to_i : 0
+            num(eval_node(args[0])).round(nd).to_f
+          when "INT" then num(eval_node(args[0])).floor
+          when "FLOOR", "CEILING"
+            v = num(eval_node(args[0]))
+            if args.length > 1
+              sig = num(eval_node(args[1]))
+              raise Error, "#{fn} significance cannot be 0" if sig.zero?
+
+              q = v / sig
+              fn == "FLOOR" ? (q.floor * sig).round(9) : (q.ceil * sig).round(9)
+            else
+              fn == "FLOOR" ? v.floor : v.ceil
+            end
+          when "ABS"     then num(eval_node(args[0])).abs
+          when "SQRT"    then domain { Math.sqrt(num(eval_node(args[0]))) }
+          when "EXP"     then Math.exp(num(eval_node(args[0])))
+          when "LN"
+            v = num(eval_node(args[0]))
+            raise Error, "LN requires a number > 0" unless v.positive?
+
+            Math.log(v)
+          when "LOG10"
+            v = num(eval_node(args[0]))
+            raise Error, "LOG10 requires a number > 0" unless v.positive?
+
+            Math.log10(v)
+          when "SIGN"    then num(eval_node(args[0])) <=> 0
+          when "EVEN", "ODD"
+            v = num(eval_node(args[0]))
+            r = v.negative? ? v.floor : v.ceil
+            bump = fn == "EVEN" ? r.odd? : r.even?
+            r += v.negative? ? -1 : 1 if bump
+            r
+          when "ISEVEN"  then num(eval_node(args[0])).to_i.even?
+          when "ISODD"   then num(eval_node(args[0])).to_i.odd?
+          when "RAND"    then rand
+          when "RANDBETWEEN"
+            lo, hi = args.map { |a| num(eval_node(a)).to_i }
+            raise Error, "RANDBETWEEN needs bottom <= top" if lo > hi
+
+            rand(lo..hi)
+          # ---- trig (degrees, like classic DC) ---------------------------------
+          when "SIN"     then Math.sin(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "COS"     then Math.cos(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "TAN"     then Math.tan(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "ASIN"    then domain { Math.asin(num(eval_node(args[0]))) * 180.0 / Math::PI }
+          when "ACOS"    then domain { Math.acos(num(eval_node(args[0]))) * 180.0 / Math::PI }
+          when "ATAN"    then Math.atan(num(eval_node(args[0]))) * 180.0 / Math::PI
+          when "SINH"    then Math.sinh(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "COSH"    then Math.cosh(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "TANH"    then Math.tanh(num(eval_node(args[0])) * Math::PI / 180.0)
+          when "ASINH"   then Math.asinh(num(eval_node(args[0]))) * 180.0 / Math::PI
+          when "ACOSH"   then domain { Math.acosh(num(eval_node(args[0]))) * 180.0 / Math::PI }
+          when "ATANH"   then domain { Math.atanh(num(eval_node(args[0]))) * 180.0 / Math::PI }
+          when "PI"      then Math::PI
+          when "DEGREES" then num(eval_node(args[0])) * 180.0 / Math::PI
+          when "RADIANS" then num(eval_node(args[0])) * Math::PI / 180.0
+          # ---- text --------------------------------------------------------------
+          when "CONCATENATE" then args.map { |a| str(eval_node(a)) }.join
+          when "CHAR"   then num(eval_node(args[0])).to_i.chr
+          when "CODE"
+            s = str(eval_node(args[0]))
+            raise Error, "CODE needs a non-empty string" if s.empty?
+
+            s[0].ord
+          when "DOLLAR"
+            v = num(eval_node(args[0]))
+            nd = args.length > 1 ? num(eval_node(args[1])).to_i : 2
+            i, f = format("%.#{[nd, 0].max}f", v.round(nd)).split(".")
+            i = i.reverse.gsub(/(\d{3})(?=\d)/, '\1,').reverse
+            "$#{i}#{f ? '.' + f : ''}"
+          when "EXACT"  then str(eval_node(args[0])) == str(eval_node(args[1]))
+          when "FIND"
+            needle = str(eval_node(args[0]))
+            hay = str(eval_node(args[1]))
+            from = args.length > 2 ? [num(eval_node(args[2])).to_i - 1, 0].max : 0
+            idx = hay.index(needle, from)
+            idx ? idx + 1 : 0
+          when "LEFT"
+            s = str(eval_node(args[0]))
+            n = args.length > 1 ? num(eval_node(args[1])).to_i : 1
+            s[0, [n, 0].max] || ""
+          when "RIGHT"
+            s = str(eval_node(args[0]))
+            n = args.length > 1 ? num(eval_node(args[1])).to_i : 1
+            n <= 0 ? "" : (s[-n..] || s)
+          when "MID"
+            s = str(eval_node(args[0]))
+            start = num(eval_node(args[1])).to_i - 1
+            n = num(eval_node(args[2])).to_i
+            start.negative? || n.negative? ? "" : (s[start, n] || "")
+          when "LEN"   then str(eval_node(args[0])).length
+          when "LOWER" then str(eval_node(args[0])).downcase
+          when "UPPER" then str(eval_node(args[0])).upcase
+          when "PROPER"
+            str(eval_node(args[0])).gsub(/[A-Za-z]+/, &:capitalize)
+          when "REPLACE"
+            s = str(eval_node(args[0])).dup
+            start = num(eval_node(args[1])).to_i - 1
+            n = num(eval_node(args[2])).to_i
+            raise Error, "REPLACE start must be >= 1" if start.negative?
+
+            s[start, [n, 0].max] = str(eval_node(args[3]))
+            s
+          when "REPT"
+            n = num(eval_node(args[1])).to_i
+            raise Error, "REPT count must be >= 0" if n.negative?
+
+            str(eval_node(args[0])) * n
+          when "SUBSTITUTE"
+            s = str(eval_node(args[0]))
+            old = str(eval_node(args[1]))
+            repl = str(eval_node(args[2]))
+            if args.length > 3
+              substitute_nth(s, old, repl, num(eval_node(args[3])).to_i)
+            else
+              s.gsub(old, repl)
+            end
+          when "TRIM"  then str(eval_node(args[0])).gsub(/\s+/, " ").strip
+          when "VALUE" then num(eval_node(args[0]))
           else
+            if ENV_FUNCTIONS.include?(fn)
+              raise Error, "#{fn} requires SketchUp model context" if @env.nil?
+
+              return @env.call(fn, args.map { |a| eval_node(a) })
+            end
             if ACTIONS.include?(fn)
               raise Error, "#{fn} requires an onClick action context" if @fx.nil?
 
@@ -440,9 +597,28 @@ module OpenSketchupDC
           end
         end
 
+        def substitute_nth(s, old, repl, occ)
+          return s if occ < 1 || old.empty?
+
+          idx = -1
+          occ.times do
+            idx = s.index(old, idx + 1)
+            return s unless idx
+          end
+          s.dup.tap { |x| x[idx, old.length] = repl }
+        end
+
+        def domain
+          yield
+        rescue Math::DomainError => e
+          raise Error, e.message
+        end
+
         def option_list(attr_name)
-          @meta.call(attr_name, "options").to_s.split("&").map do |pair|
+          @meta.call(attr_name, "options").to_s.split("&").filter_map do |pair|
             k, v = pair.split("=", 2)
+            next if k.to_s.empty?
+
             [Param.url_decode(k.to_s), Param.url_decode(v.to_s)]
           end
         end
@@ -501,7 +677,7 @@ module OpenSketchupDC
           when :var then deps << [nil, node[1]]
           when :ref then deps << [node[1], node[2]]
           when :call
-            if %w[CURRENT OPTIONINDEX OPTIONVALUE].include?(node[1]) &&
+            if %w[CURRENT OPTIONINDEX OPTIONVALUE OPTIONLABEL].include?(node[1]) &&
                node[2][0].is_a?(Array) && node[2][0][0] == :str
               deps << [nil, node[2][0][1].downcase]
             end

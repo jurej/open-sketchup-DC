@@ -36,8 +36,32 @@ module OpenSketchupDC
         end
       end
 
+      # A Selection observer only lives as long as the Selection it was
+      # attached to - a new/opened model gets a fresh Selection and the spy
+      # on the old one goes silent. AppObserver re-wires on model changes.
+      class AppSpy < Sketchup::AppObserver
+        def expectsStartupModelNotifications
+          true
+        end
+
+        def onNewModel(model)
+          Observers.on_model_change(model)
+        end
+
+        def onOpenModel(model)
+          Observers.on_model_change(model)
+        end
+
+        # Multi-document switching (Mac); a no-op event on Windows.
+        def onActivateModel(model)
+          Observers.on_model_change(model)
+        end
+      end
+
       @selection_spy = nil
       @entity_spy = nil
+      @app_spy = nil
+      @selection_model = nil
       @watched = []
       @dict_owners = {}
 
@@ -45,11 +69,32 @@ module OpenSketchupDC
 
       def install(model)
         @entity_spy ||= EntitySpy.new
-        unless @selection_spy
-          @selection_spy = SelectionSpy.new
-          model.selection.add_observer(@selection_spy)
-        end
+        @selection_spy ||= SelectionSpy.new
+        ensure_selection_spy(model)
         watch_current(model)
+        Sketchup.add_observer(@app_spy ||= AppSpy.new)
+      end
+
+      # Re-attach the selection spy whenever the active model changes.
+      def ensure_selection_spy(model)
+        return if model.nil? || @selection_model == model
+
+        if @selection_model
+          begin
+            @selection_model.selection.remove_observer(@selection_spy)
+          rescue StandardError
+            nil
+          end
+        end
+        model.selection.add_observer(@selection_spy)
+        @selection_model = model
+      rescue StandardError
+        nil
+      end
+
+      def on_model_change(model)
+        install(model)
+        Panel.schedule_push
       end
 
       # Re-attach the entity spy to the currently selected targets, their

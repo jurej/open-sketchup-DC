@@ -128,10 +128,14 @@ module OpenSketchupDC
       end
 
       # Merged effective values: computed where a formula ran, stored otherwise.
+      # Builtins are display-only rows - they hold live transform values and
+      # must never drive the applier (a synthesized rotx would recompose the
+      # transform on every recompute). Once edited into the dict they arrive
+      # as ordinary params and apply normally.
       def applied_values(ps, computed)
         out = {}
         ps.each do |p|
-          next if p.internal?
+          next if p.internal? || p.builtin?
 
           out[p.name] = computed.key?(p.name) ? computed[p.name] : p.value
         end
@@ -171,12 +175,15 @@ module OpenSketchupDC
           h && h[f]
         end
 
+        env = env_for(inst, model)
+
         order.each do |name|
           p = ps[name]
           next if p.nil? || !p.formula?
 
           begin
-            computed[name] = Expression.eval!(p.formula, get: get, ref: ref, meta: meta)
+            computed[name] = Expression.eval!(p.formula,
+                                              get: get, ref: ref, meta: meta, env: env)
           rescue StandardError => e
             errors[name] = e.message
           end
@@ -232,6 +239,50 @@ module OpenSketchupDC
           nm = DCReader.dict_get(DCReader.dict_of(e.definition, OS_DC_DICT), "_name")
         end
         (nm || e.name).to_s.downcase
+      end
+
+      # SketchUp-model formula functions (EDGES FACES FACEAREA LAT LNG
+      # SUNANGLE SUNELEVATION) resolved against `entity`/`model`. Shared
+      # with Interact, whose eval contexts pass the picked entity.
+      def env_for(entity, model)
+        lambda do |fn, args|
+          case fn
+          when "EDGES" then env_entities(entity).grep(Sketchup::Edge).length
+          when "FACES" then env_entities(entity).grep(Sketchup::Face).length
+          when "FACEAREA"
+            want = args[0].to_s.downcase
+            faces = env_entities(entity).grep(Sketchup::Face)
+            faces = faces.select { |f| face_material?(f, want) } unless want.empty?
+            faces.sum(&:area)
+          when "LAT" then model.shadow_info["Latitude"].to_f
+          when "LNG" then model.shadow_info["Longitude"].to_f
+          when "SUNANGLE", "SUNELEVATION"
+            d = model.shadow_info["SunDirection"]
+            d = d.reverse if d.respond_to?(:reverse) && d.z.to_f.negative?
+            elev = Math.asin(d.z.to_f.clamp(-1.0, 1.0)) * 180.0 / Math::PI
+            az = Math.atan2(d.x.to_f, d.y.to_f) * 180.0 / Math::PI
+            fn == "SUNELEVATION" ? elev : az % 360.0
+          else
+            raise Expression::Error, "unsupported model function '#{fn}'"
+          end
+        end
+      end
+
+      # Direct entities of the entity's geometry container - "ungrouped"
+      # children in DC terms (a Group's entities, a component's definition).
+      def env_entities(entity)
+        if entity.is_a?(Sketchup::Group)
+          entity.entities
+        elsif entity.is_a?(Sketchup::ComponentInstance)
+          entity.definition.entities
+        else
+          []
+        end
+      end
+
+      def face_material?(face, name)
+        [face.material, face.back_material].compact
+          .any? { |m| m.name.downcase == name }
       end
 
       # Write computed values + errors back to the instance dict.

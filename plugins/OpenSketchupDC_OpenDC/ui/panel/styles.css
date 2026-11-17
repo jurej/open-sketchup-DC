@@ -2,19 +2,84 @@
    Copyright (C) 2026 Jure Judež and contributors
    SPDX-License-Identifier: AGPL-3.0-or-later */
 
+/* Dark is the default palette; theme.js flips html[data-theme] to the
+   OS mode (Windows registry via Ruby, prefers-color-scheme elsewhere). */
 :root {
+  color-scheme: dark;
   --bg: #1e1f24;
   --bg2: #26272e;
   --bg3: #2f313a;
   --fg: #e6e6ea;
   --dim: #9a9daa;
+  --muted: #8a8a93;
   --accent: #4f9cf9;
+  --accent-hover: #6fafff;
+  --accent-fg: #cfe4ff;
   --accent2: #7fd0a2;
   --warn: #f0b25a;
   --error: #e5646c;
+  --fn: #b9a5f0;
   --border: #3a3c46;
+  --row-hover: rgba(255, 255, 255, .03);
+  --shadow: rgba(0, 0, 0, .4);
+  --banner-bg: #3d3324;
+  --toast-bg: #47272b;
+  --confirm-bg: #2c5240;
+  --confirm-bg-hover: #39694f;
+  --confirm-fg-hover: #fff;
+  --badge-bg: #3a3f52;
+  --badge-osdc-bg: #2c4538;
+  --badge-kind-bg: #40424e;
+  --chip-bd: #2c5240;
+  --pill-attr-bd: #3a5a80;
+  --pill-ref-bd: #2c5240;
+  --pill-fn-bd: #5a4a80;
+  --pill-act-bd: #7a4a3a;
+  --fxkind-attr-bg: #3a5a80;
+  --fxkind-glob-bg: #2c5240;
+  --fxkind-fn-bg: #5a4a80;
+  --fxkind-act-bg: #7a4a3a;
+  --pedit-bg: #121316;
   --radius: 6px;
-  font-size: 13px;
+  font-size: 11.5px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f1f2f4;
+  --bg2: #ffffff;
+  --bg3: #f6f7f9;
+  --fg: #23252d;
+  --dim: #585d68;
+  --muted: #7b8090;
+  --accent: #0d6dd8;
+  --accent-hover: #0b5cbd;
+  --accent-fg: #0b5cbd;
+  --accent2: #157a47;
+  --warn: #a05c10;
+  --error: #c4323b;
+  --fn: #7a5cd0;
+  --border: #d3d6dc;
+  --row-hover: rgba(0, 0, 0, .045);
+  --shadow: rgba(0, 0, 0, .18);
+  --banner-bg: #fdf1dd;
+  --toast-bg: #fce4e6;
+  --confirm-bg: #dcefe4;
+  --confirm-bg-hover: #c6e6d2;
+  --confirm-fg-hover: #0d5c36;
+  --badge-bg: #dfe7f6;
+  --badge-osdc-bg: #d7eee0;
+  --badge-kind-bg: #e6e8ec;
+  --chip-bd: #9ecbb2;
+  --pill-attr-bd: #a9c8ea;
+  --pill-ref-bd: #a4d2ba;
+  --pill-fn-bd: #c9bcec;
+  --pill-act-bd: #ecc9a9;
+  --fxkind-attr-bg: #a9c8ea;
+  --fxkind-glob-bg: #a4d2ba;
+  --fxkind-fn-bg: #c9bcec;
+  --fxkind-act-bg: #ecc9a9;
+  --pedit-bg: #eef0f4;
 }
 
 * { box-sizing: border-box; }
@@ -23,7 +88,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  font: 11.5px/1.45 "Segoe UI", system-ui, sans-serif;
 }
 
 .hidden { display: none !important; }
@@ -53,7 +118,7 @@ input, select, button, textarea {
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 4px 7px;
+  padding: 3px 6px;
   font: inherit;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
@@ -63,16 +128,16 @@ button.primary {
   background: var(--accent); border-color: var(--accent); color: #fff;
   font-weight: 600;
 }
-button.primary:hover { background: #6fafff; border-color: #6fafff; }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button.confirm {
-  background: #2c5240; border-color: var(--accent2); color: var(--accent2);
+  background: var(--confirm-bg); border-color: var(--accent2); color: var(--accent2);
 }
-button.confirm:hover { background: #39694f; color: #fff; }
+button.confirm:hover { background: var(--confirm-bg-hover); color: var(--confirm-fg-hover); }
 button.danger { color: var(--error); }
 button.danger:hover { border-color: var(--error); background: rgba(229,100,108,.12); }
 button.ghost-acc { color: var(--accent); border-color: rgba(79,156,249,.45); }
 button.ghost-acc:hover { background: rgba(79,156,249,.15); border-color: var(--accent); }
-button.small { padding: 1px 7px; font-size: 12px; }
+button.small { padding: 1px 6px; font-size: 11px; }
 button.fx-on {
   color: var(--accent);
   border-color: rgba(79, 156, 249, 0.55);
@@ -81,10 +146,36 @@ button.fx-on {
 }
 button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--accent); }
 
+/* ---------- Modus Icons 2.0 (vendored glyphs) ----------
+   Glyph data from @trimble-oss/modus-icons-css 0.10.0 (MIT), using the
+   same CSS-mask mechanism as modus-wc-icon: the glyph is cut out of
+   currentColor, so it tracks the button's text/hover color. */
+:root {
+  --modus-icon-graph: url("data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 256 256\"><path fill=\"none\" d=\"M0 0h256v256H0z\"/><circle cx=\"128\" cy=\"128\" r=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\"/><circle cx=\"96\" cy=\"56\" r=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\"/><circle cx=\"200\" cy=\"104\" r=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\"/><circle cx=\"200\" cy=\"184\" r=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\"/><circle cx=\"56\" cy=\"192\" r=\"24\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\"/><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"16\" d=\"m118.25 106.07-12.5-28.14M177.23 111.59l-26.46 8.82M181.06 169.27l-34.12-26.54M110.06 143.94l-36.12 32.12\"/></svg>");
+}
+[class^="modus-icon-"] {
+  display: inline-block;
+  aspect-ratio: 1/1;
+  height: 1em;
+  width: 1em;
+  vertical-align: -0.125em;
+  background-color: currentColor;
+  -webkit-mask-size: contain;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+}
+.modus-icon-graph {
+  -webkit-mask-image: var(--modus-icon-graph);
+  mask-image: var(--modus-icon-graph);
+}
+
 /* ---------- banner / toast ---------- */
 #banner {
   padding: 8px 12px;
-  background: #3d3324;
+  background: var(--banner-bg);
   color: var(--warn);
   border-bottom: 1px solid var(--border);
 }
@@ -92,7 +183,7 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   position: fixed;
   bottom: 12px; left: 12px; right: 12px;
   padding: 9px 12px;
-  background: #47272b;
+  background: var(--toast-bg);
   color: var(--error);
   border: 1px solid var(--error);
   border-radius: var(--radius);
@@ -121,13 +212,14 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   letter-spacing: .06em;
   padding: 2px 6px;
   border-radius: 3px;
-  background: #3a3f52;
+  background: var(--badge-bg);
   color: var(--accent);
 }
-.badge.osdc { background: #2c4538; color: var(--accent2); }
-.badge.kind { background: #40424e; color: var(--dim); }
+.badge.osdc { background: var(--badge-osdc-bg); color: var(--accent2); }
+.badge.kind { background: var(--badge-kind-bg); color: var(--dim); }
+.badge.static { background: var(--badge-kind-bg); color: var(--dim); }
 
-#btn-config { color: var(--dim); font-size: 14px; }
+#btn-config { color: var(--dim); font-size: 12.5px; }
 #btn-config:hover { color: var(--fg); }
 #btn-config.on {
   color: var(--accent);
@@ -157,13 +249,13 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   align-items: center;
   padding: 4px 10px;
 }
-.prow:hover { background: rgba(255,255,255,.03); }
+.prow:hover { background: var(--row-hover); }
 .prow .pname { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prow .pname b { color: var(--fg); font-weight: 500; }
 .prow input, .prow select { width: 100%; min-width: 0; }
 .prow .ro { color: var(--fg); }
 .prow.internal .pname { font-style: italic; }
-.prow .err { color: var(--error); font-size: 11px; grid-column: 1 / -1; }
+.prow .err { color: var(--error); font-size: 10px; grid-column: 1 / -1; }
 .prow .formula-hint { font-size: 10px; color: var(--accent); }
 
 /* ---------- sections ---------- */
@@ -195,7 +287,7 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 .section .secname[data-secedit] { cursor: text; }
 .section .secname[data-secedit]:hover { color: var(--fg); }
 .section .secdel {
-  color: var(--dim); font-size: 12px; font-weight: 400;
+  color: var(--dim); font-size: 11px; font-weight: 400;
   text-transform: none; cursor: pointer; opacity: 0;
   transition: opacity .12s;
 }
@@ -210,17 +302,22 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 
 /* insert-divider strip between rows (configure mode) */
 .secinsert {
-  position: relative; height: 6px; margin: -3px 10px 0; cursor: pointer;
+  position: relative; height: 11px; margin: -5px 10px -3px; cursor: pointer;
+}
+.secinsert::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%;
+  border-top: 1px dashed rgba(79,156,249,.45);
+  opacity: 0; transition: opacity .1s;
 }
 .secinsert::after {
-  content: "+ divider"; position: absolute; left: 50%; top: -6px;
-  transform: translateX(-50%);
-  font-size: 9px; line-height: 13px; padding: 0 7px;
+  content: "+ divider"; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px; line-height: 15px; padding: 0 9px;
   color: var(--accent); background: var(--bg2);
-  border: 1px dashed rgba(79,156,249,.5); border-radius: 7px;
+  border: 1px dashed rgba(79,156,249,.5); border-radius: 8px;
   opacity: 0; transition: opacity .1s; white-space: nowrap;
 }
-.secinsert:hover::after { opacity: 1; }
+.secinsert:hover::before, .secinsert:hover::after { opacity: 1; }
 
 /* ---------- tooltip hint marker ---------- */
 .tipdot {
@@ -244,7 +341,7 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   display: inline-block;
   margin-right: 4px;
   color: var(--dim);
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: -1px;
   cursor: grab;
   opacity: 0;
@@ -259,14 +356,16 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 
 /* ---------- advanced editor ---------- */
 .pedit {
-  border-top: 1px dashed var(--border);
   margin: 4px 10px 8px;
   padding: 8px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+  background: var(--pedit-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
-.pedit label { display: block; font-size: 11px; color: var(--dim); }
+.pedit label { display: block; font-size: 10px; color: var(--dim); }
 .pedit input, .pedit select { width: 100%; margin-top: 2px; }
 .pedit .full { grid-column: 1 / -1; }
 .pedit .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
@@ -291,7 +390,7 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
-  min-height: 28px;
+  min-height: 25px;
   padding: 3px 6px;
   background: var(--bg3);
   border: 1px solid var(--border);
@@ -306,15 +405,30 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   padding: 1px 4px 1px 8px;
   border-radius: 9px;
   background: rgba(127,208,162,.18);
-  box-shadow: inset 0 0 0 1px #2c5240;
-  font-size: 12px;
+  box-shadow: inset 0 0 0 1px var(--chip-bd);
+  font-size: 11px;
+  cursor: grab;
 }
+.optchip.dragging { opacity: .35; }
+/* drop caret: the border offsets its own negative margin, so no reflow */
+.optchip.drop-before { border-left: 2px solid var(--accent); margin-left: -2px; }
+.optchip.drop-after { border-right: 2px solid var(--accent); margin-right: -2px; }
+.optlabel { cursor: text; }
+.optedit {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  padding: 0;
+  border-radius: 0;
+  outline: none;
+}
+.optedit:focus { border: none; outline: none; }
 .optx {
   border: none;
   background: none;
   color: var(--dim);
   padding: 0 2px;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
 }
 .optx:hover { color: var(--error); }
@@ -328,22 +442,52 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 .optin:focus { outline: none; border: none; }
 
 /* ---------- formula builder ---------- */
-.fxedit { position: relative; margin-top: 2px; }
+.fxedit {
+  position: relative;
+  margin-top: 2px;
+  display: flex;
+  align-items: stretch;
+}
 .pedit .fxed {
-  min-height: 26px;
-  padding: 4px 7px;
+  flex: 1;
+  min-width: 0;
+  min-height: 23px;
+  padding: 3px 6px;
   background: var(--bg3);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  color: var(--fg);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 13px;
+  font-size: 11.5px;
   white-space: pre-wrap;
   word-break: break-word;
   cursor: text;
 }
 .pedit .fxed:focus { border-color: var(--accent); outline: none; }
 .pedit .fxed.invalid { border-color: var(--error); }
+/* square action buttons attached to the field's right edge */
+.fxedit .fxbtn {
+  flex: 0 0 auto;
+  width: 27px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(79, 156, 249, 0.55);
+  border-radius: 0;
+  background: rgba(79, 156, 249, 0.12);
+  color: var(--accent);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+.fxedit .fxbtn + .fxbtn { border-left: none; }
+.fxedit .fxbtn:last-of-type { border-radius: 0 var(--radius) var(--radius) 0; }
+.fxedit .fxbtn:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--accent); }
+.fxedit .fxbtn .modus-icon-graph { font-size: 13px; }
+.fxedit:focus-within .fxbtn { border-color: var(--accent); }
+.fxedit:has(.fxed.invalid) .fxbtn { border-color: var(--error); }
 .fxpill {
   display: inline-block;
   border-radius: 9px;
@@ -352,10 +496,10 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   cursor: default;
   user-select: all; /* pill behaves as one selectable unit */
 }
-.fxpill.attr { background: rgba(79,156,249,.25); box-shadow: inset 0 0 0 1px #3a5a80; color: var(--accent); }
-.fxpill.ref  { background: rgba(127,208,162,.20); box-shadow: inset 0 0 0 1px #2c5240; color: var(--accent2); }
-.fxpill.fn   { background: rgba(185,165,240,.20); box-shadow: inset 0 0 0 1px #5a4a80; color: #b9a5f0; }
-.fxpill.act  { background: rgba(230,150,100,.20); box-shadow: inset 0 0 0 1px #7a4a3a; color: var(--warn); }
+.fxpill.attr { background: rgba(79,156,249,.25); box-shadow: inset 0 0 0 1px var(--pill-attr-bd); color: var(--accent); }
+.fxpill.ref  { background: rgba(127,208,162,.20); box-shadow: inset 0 0 0 1px var(--pill-ref-bd); color: var(--accent2); }
+.fxpill.fn   { background: rgba(185,165,240,.20); box-shadow: inset 0 0 0 1px var(--pill-fn-bd); color: var(--fn); }
+.fxpill.act  { background: rgba(230,150,100,.20); box-shadow: inset 0 0 0 1px var(--pill-act-bd); color: var(--warn); }
 .fxpill.kw   { background: rgba(140,140,140,.18); box-shadow: inset 0 0 0 1px var(--border); color: var(--muted); }
 .fxlist {
   position: absolute;
@@ -368,16 +512,16 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   border-radius: var(--radius);
   max-height: 180px;
   overflow-y: auto;
-  box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  box-shadow: 0 4px 14px var(--shadow);
 }
 .fxitem {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 4px 8px;
+  padding: 3px 8px;
   cursor: pointer;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
 }
 .fxitem.sel, .fxitem:hover { background: var(--bg2); }
 .fxkind {
@@ -387,23 +531,11 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   border-radius: 3px;
   flex: 0 0 auto;
 }
-.fxkind.attr { background: #3a5a80; color: var(--accent); }
-.fxkind.glob { background: #2c5240; color: var(--accent2); }
-.fxkind.fn   { background: #5a4a80; color: #b9a5f0; }
-.fxkind.act  { background: #7a4a3a; color: var(--warn); }
-.fxdocs {
-  font-size: 10px;
-  font-family: ui-monospace, Consolas, monospace;
-  padding: 0 6px;
-  margin-left: 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg3);
-  color: var(--accent);
-  vertical-align: middle;
-}
-.fxdocs:hover { border-color: var(--accent); }
-.fxstatus { margin-top: 4px; font-size: 11px; }
+.fxkind.attr { background: var(--fxkind-attr-bg); color: var(--accent); }
+.fxkind.glob { background: var(--fxkind-glob-bg); color: var(--accent2); }
+.fxkind.fn   { background: var(--fxkind-fn-bg); color: var(--fn); }
+.fxkind.act  { background: var(--fxkind-act-bg); color: var(--warn); }
+.fxstatus { margin-top: 4px; font-size: 10px; }
 .fxstatus .bad  { color: var(--error); }
 .fxstatus .hint { color: var(--warn); }
 .fxstatus .ok   { color: var(--accent2); }
@@ -423,6 +555,32 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   border-bottom: 1px solid var(--border);
 }
 
+/* ---------- multi-select entity fold ---------- */
+#entsfold { margin: 10px 10px 0; }
+#entsfold > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--dim);
+  font-size: 11px;
+  user-select: none;
+}
+#entsfold > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 7px;
+  transition: transform .12s;
+}
+#entsfold[open] > summary::before { transform: rotate(90deg); }
+#entsfold > summary:hover { color: var(--fg); border-color: var(--accent); }
+#entsfold .fcount { color: var(--accent); font-weight: 600; }
+/* folded cards align with the summary bar edges */
+#entsfold .foldbody { margin-bottom: 10px; }
+#entsfold .foldbody .card { margin: 10px 0 0; }
+
 /* ---------- add form ---------- */
 .addrow { padding: 4px 10px 10px; }
 .addbtn {
@@ -439,7 +597,7 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
   background: rgba(79, 156, 249, 0.18);
   border-color: var(--accent);
   border-style: solid;
-  color: #cfe4ff;
+  color: var(--accent-fg);
 }
 .addform {
   display: flex;
@@ -453,5 +611,5 @@ button.fx-on:hover { background: rgba(79, 156, 249, 0.22); border-color: var(--a
 
 /* ---------- empty ---------- */
 #empty { text-align: center; padding: 40px 20px; color: var(--dim); }
-#empty .hint { font-size: 12px; }
+#empty .hint { font-size: 11px; }
 code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; }

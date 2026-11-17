@@ -38,7 +38,8 @@
 
   var AddArgBtn = {
     props: ["ikey", "getData", "putData", "node"],
-    template: '<button class="addarg" @click="add" @mousedown.stop>+ arg</button>',
+    template: '<button class="addarg" title="Add an argument input" ' +
+      '@click="add" @mousedown.stop>+ arg</button>',
     methods: {
       add: function () {
         var n = this.node;

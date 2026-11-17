@@ -6,28 +6,42 @@
 <head>
   <meta charset="utf-8">
   <title>Open DC - Dependency Graph</title>
+  <script src="../theme.js"></script>
   <style>
     :root {
+      color-scheme: dark;
       --bg: #17181c; --bg2: #1e1f24; --bg3: #23242b;
       --fg: #d8d8de; --dim: #a9a9b2; --muted: #8a8a93;
       --accent: #4f9cf9; --accent2: #7fd0a2;
       --warn: #e69664; --error: #e66565; --border: #2a2b31;
       --fn: #b9a5f0;
+      --node-shadow: rgba(0,0,0,.35); --menu-shadow: rgba(0,0,0,.55);
+      --backdrop: rgba(0,0,0,.5);
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #eceef1; --bg2: #f6f7f9; --bg3: #ffffff;
+      --fg: #23252d; --dim: #565b66; --muted: #747a88;
+      --accent: #0d6dd8; --accent2: #157a47;
+      --warn: #a05c10; --error: #c4323b; --border: #d3d6dc;
+      --fn: #7a5cd0;
+      --node-shadow: rgba(0,0,0,.14); --menu-shadow: rgba(0,0,0,.22);
+      --backdrop: rgba(0,0,0,.3);
     }
     html, body { height: 100%; margin: 0; overflow: hidden;
       background: var(--bg); color: var(--fg);
-      font: 13px/1.45 "Segoe UI", sans-serif; }
+      font: 11.5px/1.45 "Segoe UI", sans-serif; }
     header {
       display: flex; align-items: center; gap: 10px;
       padding: 7px 12px; border-bottom: 1px solid var(--border);
       background: var(--bg); z-index: 10; position: relative;
     }
     #gtitle { font-weight: 600; color: var(--accent); white-space: nowrap; }
-    .hint { font-size: 11px; color: var(--muted); }
+    .hint { font-size: 10px; color: var(--muted); }
     #gadd {
       margin-left: auto; background: var(--bg3); color: var(--accent);
       border: 1px solid var(--accent); border-radius: 5px;
-      padding: 3px 12px; cursor: pointer; font-size: 12px;
+      padding: 3px 11px; cursor: pointer; font-size: 11px;
     }
     #gadd:hover { background: var(--bg2); }
     #rete { position: absolute; inset: 38px 0 0 0; }
@@ -41,11 +55,11 @@
     .node {
       position: relative; background: var(--bg3); border: 1px solid var(--border);
       border-radius: 6px; min-width: 110px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.35);
+      box-shadow: 0 2px 8px var(--node-shadow);
       font-family: ui-monospace, Consolas, monospace;
     }
     .node.selected { border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0,0,0,.35); }
+      box-shadow: 0 0 0 1px var(--accent), 0 2px 8px var(--node-shadow); }
     .node.cyc { border-color: var(--error);
       background: rgba(230, 100, 100, .10); }
     .ntitle {
@@ -56,7 +70,7 @@
     .nkind { font-size: 8.5px; letter-spacing: .06em;
       text-transform: uppercase; color: var(--muted); }
     .nname {
-      flex: 1; font-size: 12px; font-weight: 600; color: var(--fg);
+      flex: 1; font-size: 11px; font-weight: 600; color: var(--fg);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .node.cyc .nname { color: var(--error); }
@@ -103,13 +117,13 @@
     #rete .context-menu {
       background: var(--bg3); border: 1px solid var(--border);
       border-radius: 7px; padding: 3px 0; min-width: 170px; width: auto;
-      margin: 0; box-shadow: 0 8px 20px rgba(0,0,0,.55); z-index: 30;
+      margin: 0; box-shadow: 0 8px 20px var(--menu-shadow); z-index: 30;
       font-family: ui-monospace, Consolas, monospace;
       overflow: visible;
     }
     #rete .context-menu .item {
       color: var(--fg); background: transparent; border: 0;
-      padding: 4px 14px; font-size: 11px; cursor: pointer;
+      padding: 3px 12px; font-size: 10px; cursor: pointer;
       font-family: inherit; width: auto; position: relative;
     }
     #rete .context-menu .item:hover { background: var(--bg2); color: var(--accent); }
@@ -121,12 +135,12 @@
       background: var(--bg2); border: 1px solid var(--border);
       color: var(--fg); border-radius: 4px; padding: 3px 7px;
       width: 100%; box-sizing: border-box;
-      font: 11px ui-monospace, Consolas, monospace; outline: none;
+      font: 10px ui-monospace, Consolas, monospace; outline: none;
     }
     #rete .context-menu .search input:focus { border-color: var(--accent); }
     #rete .context-menu .subitems {
       background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+      border-radius: 7px; box-shadow: 0 8px 20px var(--menu-shadow);
       padding: 3px 0; min-width: 150px;
       max-height: min(340px, calc(100vh - 80px));
       overflow-y: auto; overflow-x: hidden;
@@ -137,14 +151,14 @@
     #gtoast {
       position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
       background: var(--bg3); border: 1px solid var(--border);
-      border-radius: 6px; padding: 6px 12px; font-size: 12px;
+      border-radius: 6px; padding: 5px 11px; font-size: 11px;
       color: var(--fg); opacity: 0; transition: opacity .2s; z-index: 40;
       pointer-events: none; max-width: 90%;
     }
     #gtoast.show { opacity: 1; }
     #gtoast.err { border-color: var(--error); color: var(--error); }
     #gconfirm, #gnew {
-      position: fixed; inset: 0; background: rgba(0,0,0,.5);
+      position: fixed; inset: 0; background: var(--backdrop);
       display: none; align-items: center; justify-content: center; z-index: 50;
     }
     #gconfirm.show, #gnew.show { display: flex; }
@@ -156,14 +170,14 @@
     .gdialog input[type=text] {
       width: 100%; box-sizing: border-box; margin: 0 0 12px;
       background: var(--bg3); border: 1px solid var(--border);
-      color: var(--fg); border-radius: 5px; padding: 5px 8px;
-      font: 12px ui-monospace, Consolas, monospace; outline: none;
+      color: var(--fg); border-radius: 5px; padding: 4px 7px;
+      font: 11px ui-monospace, Consolas, monospace; outline: none;
     }
     .gdialog input[type=text]:focus { border-color: var(--accent); }
     .gdialog .btns { display: flex; gap: 8px; justify-content: flex-end; }
     .gdialog button {
       background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
-      border-radius: 5px; padding: 4px 12px; cursor: pointer; font-size: 12px;
+      border-radius: 5px; padding: 3px 11px; cursor: pointer; font-size: 11px;
     }
     .gdialog button.primary { border-color: var(--accent); color: var(--accent); }
   </style>
@@ -182,8 +196,8 @@
   <div id="gconfirm"><div class="gdialog">
     <p id="gctext"></p>
     <div class="btns">
-      <button id="gccancel">Cancel</button>
-      <button id="gcok" class="primary">Replace</button>
+      <button id="gccancel" title="Keep the existing formula">Cancel</button>
+      <button id="gcok" class="primary" title="Replace the attribute's formula">Replace</button>
     </div>
   </div></div>
   <div id="gnew"><div class="gdialog">
@@ -191,8 +205,8 @@
     <input id="gnewname" type="text" placeholder="e.g. shelf_count"
       spellcheck="false" autocomplete="off">
     <div class="btns">
-      <button id="gncancel">Cancel</button>
-      <button id="gnok" class="primary">Add</button>
+      <button id="gncancel" title="Close without adding">Cancel</button>
+      <button id="gnok" class="primary" title="Create the attribute">Add</button>
     </div>
   </div></div>
   <script src="../vendor/vue.min.js"></script>

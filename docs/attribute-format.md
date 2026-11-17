@@ -16,6 +16,7 @@ Keys are always lowercase. Underscore-prefixed keys are meta/system fields.
   _lenx_options       = "A=1&B=2"   # url-encoded list (LIST only)
   _lenx_units         = "INCHES"    # INCHES CENTIMETERS MILLIMETERS METERS
                                     # FEET DEGREES FLOAT INTEGER STRING BOOLEAN
+                                    # DEFAULT = "End user's model units"
   _lenx_formula       = "5*2"       # formula source (no leading =)
   _lenx_formulaunits  = "INCHES"
   _lenx_nominal       = 10.0        # unscaled length (LenX/Y/Z only)
@@ -62,6 +63,10 @@ Write rules that work against Trimble's engine (verified):
   `sirina&"/"&visina` and `sirina&&quot;/&quot;&visina` both evaluate
   correctly. `DCReader` still decodes the full entity set on read
   (`&amp;` last) so foreign-written formulas display cleanly.
+- `_<name>_units = "DEFAULT"` = "End user's model units": display and
+  input resolve to the model's `UnitsOptions.LengthUnit` (and format —
+  architectural/fractional included). The panel converts through it on
+  both reads and writes.
 - Bare numbers in the formula slot are evaluated in the attr's
   `_<name>_formulaunits` context, **not** inches — and `formulaunits` can
   differ from the display `_<name>_units` (real door DC: `units=MILLIMETERS`,
@@ -133,3 +138,22 @@ Model-level globals for `global!name` references live on the model's own
 | meta edit | owner `_<name>_<field>` | owner `_<name>_<field>` |
 | new attribute | owner: `<name>` (string cache) + full meta + `_<name>_formula` | owner: `<name>` + full meta |
 | system key | owner raw `_<key>` | owner raw `_<key>` |
+
+When the owner dictionary doesn't exist yet (plain component or group),
+`DCWriter.add_param` first seeds it via `ensure_dict`: `_formatversion`,
+`_hasbehaviors`, `_lengthunits` for classic (the keys Trimble's engine and
+dialogs use to recognize a DC) or the `_engine` marker for `open_dc`. Any
+component or group can therefore get its first attribute from the panel and
+becomes dynamic on the spot.
+
+## Built-in attributes (synthesized)
+
+`DCReader.read` appends live-computed params for the built-in SketchUp
+attributes (X Y Z, LenX/Y/Z, RotX/Y/Z, Hidden, Material) that no dict key
+claims — the same names the classic engine resolves implicitly. They display
+and edit like real params; a write adopts them into the dictionary (and
+`ensure_dict` seeds the system keys on first write). `Param#builtin?` marks
+them so they are skipped where a stored attribute is required:
+`Engine.applied_values` (they must never drive the applier — a synthesized
+`rotx` would recompose the transform on every recompute),
+`ParamSet#editable` (batch intersection), and the dependency graph.

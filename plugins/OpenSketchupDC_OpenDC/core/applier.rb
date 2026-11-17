@@ -20,35 +20,45 @@ module OpenSketchupDC
         apply_material(entity, values)
       end
 
-      # Final transform = T(x,y,z) * R(rotx,roty,rotz) * S(len/nominal).
       # Any transform attribute present in `values` is engine-controlled.
+      # Unwritten transform attrs keep their current values (classic DC
+      # semantics) - a lone "lenx" formula must not zero the rotation or
+      # collapse the scale on a moved/rotated/mirrored component.
       def apply_transform(entity, values, dict_name)
         return unless TRANSFORM_ATTRS.any? { |k| values.key?(k) }
 
         cur = entity.transformation
-        x   = v(values, "x", cur.origin.x)
-        y   = v(values, "y", cur.origin.y)
-        z   = v(values, "z", cur.origin.z)
-        rx  = v(values, "rotx", 0.0)
-        ry  = v(values, "roty", 0.0)
-        rz  = v(values, "rotz", 0.0)
+        pos, rot = effective_transform(cur, values)
+        scale = scale_factors(entity, values, dict_name, cur)
 
-        sx, sy, sz = scale_factors(entity, values, dict_name)
-
-        tr = Geom::Transformation.translation([x, y, z]) *
-             Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(1, 0, 0),
-                                           rx * Math::PI / 180.0) *
-             Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 1, 0),
-                                           ry * Math::PI / 180.0) *
-             Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1),
-                                           rz * Math::PI / 180.0) *
-             Geom::Transformation.scaling(sx, sy, sz)
         begin
-          entity.transformation = tr
+          entity.transformation = compose_transform(pos, rot, scale)
         rescue StandardError => e
           # Last-resort guard - a singular matrix must never pop a modal.
           puts "Open DC: transform skipped on #{entity}: #{e.message}"
         end
+      end
+
+      # Final transform = T(x,y,z) * R(rotx,roty,rotz) * S(len/nominal).
+      def compose_transform(pos, rot, scale)
+        Geom::Transformation.translation(pos) *
+          Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(1, 0, 0),
+                                        rot[0] * Math::PI / 180.0) *
+          Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 1, 0),
+                                        rot[1] * Math::PI / 180.0) *
+          Geom::Transformation.rotation(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1),
+                                        rot[2] * Math::PI / 180.0) *
+          Geom::Transformation.scaling(*scale)
+      end
+
+      # [[x, y, z], [rotx, roty, rotz]] in engine units: written values
+      # where the attr exists, the transform's current state otherwise.
+      def effective_transform(cur, values)
+        rot = DCReader.euler_angles(cur)
+        [[v(values, "x", cur.origin.x), v(values, "y", cur.origin.y),
+          v(values, "z", cur.origin.z)],
+         [v(values, "rotx", rot[0]), v(values, "roty", rot[1]),
+          v(values, "rotz", rot[2])]]
       end
 
       # A zero (or near-zero) len value would make the scale matrix
@@ -59,10 +69,15 @@ module OpenSketchupDC
       MIN_SCALE = 1.0e-4
       CLAMP_ERR = "zero len collapses the component - clamped".freeze
 
-      def scale_factors(entity, values, dict_name)
+      # Scale per axis: len value / nominal when the attr is written,
+      # the transform's current scale otherwise (preserves stretch on
+      # attrs the engine doesn't control).
+      def scale_factors(entity, values, dict_name, cur)
+        cur_scale = { "x" => cur.xaxis.length, "y" => cur.yaxis.length,
+                      "z" => cur.zaxis.length }
         %w[x y z].map do |axis|
           len = values["len#{axis}"]
-          next 1.0 if len.nil?
+          next cur_scale[axis] if len.nil?
 
           nom = nominal(entity, axis, dict_name)
           s = nom.to_f.zero? ? 1.0 : len.to_f / nom

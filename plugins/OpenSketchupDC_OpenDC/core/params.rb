@@ -17,8 +17,18 @@ module OpenSketchupDC
       # unit. DEGREES/FLOAT/INTEGER/STRING/BOOLEAN pass through unchanged.
       LENGTH_UNITS = %w[INCHES CENTIMETERS MILLIMETERS METERS FEET].freeze
 
+      # "DEFAULT" is classic's "End user's model units" display rule: the
+      # value shows in whatever unit/format the end user's model uses. The
+      # reader resolves it via model_units; left unresolved (pure builds)
+      # it stays a pass-through.
+      DEFAULT_UNITS = "DEFAULT".freeze
+
       def self.length_unit?(units)
         LENGTH_UNITS.include?(units.to_s.upcase)
+      end
+
+      def self.model_units_dependent?(units)
+        units.to_s.upcase == DEFAULT_UNITS
       end
 
       def self.inches_to_unit(inches, units)
@@ -43,7 +53,8 @@ module OpenSketchupDC
 
       attr_accessor :name, :value, :default, :label, :formlabel,
                     :formula, :formulaunits, :access, :options, :units,
-                    :overridden, :internal, :error, :tooltip, :section
+                    :overridden, :internal, :builtin, :error, :tooltip, :section,
+                    :model_units, :display_string, :display_default_string
 
       def initialize(name, attrs = {})
         @name = name.to_s.downcase
@@ -56,10 +67,12 @@ module OpenSketchupDC
         @access       = normalize_access(attrs[:access])
         @options      = attrs[:options]
         @units        = attrs[:units]
+        @model_units  = attrs[:model_units]
         @tooltip      = attrs[:tooltip]
         @section      = attrs[:section]
         @overridden   = attrs.fetch(:overridden, false)
         @internal     = attrs.fetch(:internal, false)
+        @builtin      = attrs.fetch(:builtin, false)
         @error        = attrs[:error]
       end
 
@@ -83,13 +96,29 @@ module OpenSketchupDC
         !!@internal
       end
 
+      # Synthesized SketchUp-attribute row (x, lenx, rotz, ...): computed
+      # live from the entity, not stored in a dict. Displayed and editable
+      # like a real param - a write adopts it into the dictionary.
+      def builtin?
+        !!@builtin
+      end
+
+      # Unit the value is displayed/typed in: `units` normally, the
+      # resolved model unit when units == "DEFAULT" (model_units unset
+      # leaves "DEFAULT" itself, which no display path treats as length).
+      def display_units
+        Param.model_units_dependent?(@units) ? (@model_units || @units) : @units
+      end
+
       # Value converted to the attribute's display unit (inches -> units).
       # Numeric only; everything else passes through.
       def display_value
-        v = numeric_value(@value)
-        return @value if v.nil? || !Param.length_unit?(@units)
+        display_of(@value)
+      end
 
-        Param.inches_to_unit(v, @units)
+      # Stored default (literal <name> slot, inches) in display units.
+      def display_default
+        display_of(@default)
       end
 
       def overridden?
@@ -177,9 +206,14 @@ module OpenSketchupDC
           "options" => @options,
           "optionsList" => parsed_options,
           "units" => @units,
+          "displayUnits" => display_units,
           "displayValue" => display_value,
+          "displayDefault" => display_default,
+          "displayString" => @display_string,
+          "displayDefaultString" => @display_default_string,
           "overridden" => @overridden,
           "internal" => @internal,
+          "builtin" => @builtin,
           "error" => @error,
           "tooltip" => @tooltip,
           "section" => @section
@@ -187,6 +221,14 @@ module OpenSketchupDC
       end
 
       private
+
+      def display_of(v)
+        n = numeric_value(v)
+        u = display_units
+        return v if n.nil? || !Param.length_unit?(u)
+
+        Param.inches_to_unit(n, u)
+      end
 
       def numeric_value(v)
         return v if v.is_a?(Numeric)
@@ -237,8 +279,11 @@ module OpenSketchupDC
         @params.select(&:configurable?)
       end
 
+      # Params that may join a batch-edit intersection. Builtins are
+      # excluded: a shared "x" would teleport every selected component
+      # to the same spot, so mass edits only apply to real attributes.
       def editable
-        @params.select(&:editable?)
+        @params.select { |p| p.editable? && !p.builtin? }
       end
 
       def to_h

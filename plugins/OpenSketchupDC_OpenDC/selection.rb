@@ -4,16 +4,26 @@
 
 module OpenSketchupDC
   module OpenDC
-    # Selection -> dynamic-component targets, plus the batch-edit
+    # Selection -> panel targets, plus the batch-edit
     # intersection logic.
     module Selection
       module_function
 
-      # Selected entities that are dynamic components (either engine).
+      # Selected entities the panel can work with: every component
+      # instance or group, dynamic or not - a plain component is a
+      # DC waiting for its first attribute.
       def targets(model)
         return [] unless model
 
-        model.selection.select { |e| DCReader.dynamic?(e) }
+        model.selection.select do |e|
+          e.is_a?(Sketchup::ComponentInstance) || e.is_a?(Sketchup::Group)
+        end
+      end
+
+      # Selected entities that are already dynamic components (either
+      # engine). Batch/recompute/convert semantics stay dynamic-only.
+      def dynamic_targets(model)
+        targets(model).select { |e| DCReader.dynamic?(e) }
       end
 
       # Params shared by every selected target, intersected by name and

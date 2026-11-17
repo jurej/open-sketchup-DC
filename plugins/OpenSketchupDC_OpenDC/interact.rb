@@ -86,7 +86,8 @@ module OpenSketchupDC
         Expression.eval!(p.formula,
                          get: ->(n) { param_value(path, n, model, seen.merge(key => true)) },
                          ref: ->(s, n) { resolve_ref(s, n, path, model) },
-                         meta: ->(n, f) { (h = ps[n]&.to_h) && h[f] })
+                         meta: ->(n, f) { (h = ps[n]&.to_h) && h[f] },
+                         env: Engine.env_for(path[-1], model))
       end
 
       def resolve_ref(scope, name, path, model)
@@ -153,6 +154,7 @@ module OpenSketchupDC
                          get: ->(n) { param_value(path, n, model) },
                          ref: ->(s, n) { resolve_ref(s, n, path, model) },
                          meta: ->(n, f) { (h = ps[n]&.to_h) && h[f] },
+                         env: Engine.env_for(entity, model),
                          fx: fx)
       end
 

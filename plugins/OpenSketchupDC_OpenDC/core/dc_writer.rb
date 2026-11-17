@@ -24,6 +24,7 @@ module OpenSketchupDC
       end
 
       def set_value(entity, name, value, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         key = value_key(name, dict_name)
         value = Param.escape_html(value.to_s) if dict_name == DC_DICT
         entity.set_attribute(dict_name, key, value)
@@ -34,6 +35,7 @@ module OpenSketchupDC
       # the input) - writing the formula slot here would replace the user's
       # formula with an evaluated constant.
       def set_default(entity, name, value, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         owner_for(entity).set_attribute(dict_name, name.to_s.downcase, value.to_s)
       end
 
@@ -43,12 +45,14 @@ module OpenSketchupDC
       end
 
       def set_meta(entity, name, field, value, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         value = Param.escape_html(value) if dict_name == DC_DICT && field.to_s == "formula"
         owner_for(entity).set_attribute(dict_name, "_#{name.to_s.downcase}_#{field}", value)
       end
 
       # Raw key writes (system keys such as "_engine", "_name").
       def set_system(entity, key, value, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         owner_for(entity).set_attribute(dict_name, key.to_s, value)
       end
 
@@ -56,14 +60,34 @@ module OpenSketchupDC
       # ordered token list: attribute names plus "&Title&" section markers,
       # joined into classic _itemorder format.
       def set_order(entity, items, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         tokens = items.map { |t| t.to_s.strip }.reject(&:empty?)
         owner_for(entity).set_attribute(dict_name, "_itemorder", tokens.join(","))
+      end
+
+      # Seeds the owner dictionary when the entity isn't dynamic yet:
+      # the first attribute write creates it from scratch and the classic
+      # engine expects its system keys (_hasbehaviors is what marks the
+      # component as a DC in Trimble's engine and dialogs). open_dc gets
+      # its _engine ownership marker instead.
+      def ensure_dict(entity, dict_name: DC_DICT)
+        owner = owner_for(entity)
+        return unless DCReader.dict_of(owner, dict_name).nil?
+
+        if dict_name == DC_DICT
+          owner.set_attribute(dict_name, "_formatversion", 1.0)
+          owner.set_attribute(dict_name, "_hasbehaviors", 1.0)
+          owner.set_attribute(dict_name, "_lengthunits", "INCHES")
+        else
+          owner.set_attribute(dict_name, "_engine", ENGINE_OS)
+        end
       end
 
       # Creates a full attribute cluster like the DC editor does.
       def add_param(entity, name:, label: nil, formlabel: nil,
                     access: ACCESS_TEXTBOX, value: "", units: "STRING",
                     options: nil, formula: nil, dict_name: DC_DICT)
+        ensure_dict(entity, dict_name: dict_name)
         n = name.to_s.downcase
         stored = dict_name == DC_DICT ? value.to_s : value
         owner_for(entity).set_attribute(dict_name, n, stored)

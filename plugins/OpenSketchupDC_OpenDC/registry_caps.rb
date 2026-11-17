@@ -35,7 +35,7 @@ module OpenSketchupDC
       end
 
       def cap_list(**_kw)
-        Selection.targets(Sketchup.active_model).map do |t|
+        Selection.dynamic_targets(Sketchup.active_model).map do |t|
           DCReader.read(t, dict_name: DCReader.dict_name_for(t)).to_h
         end
       end
@@ -55,7 +55,7 @@ module OpenSketchupDC
 
       def cap_batch_set(name:, value:)
         model = Sketchup.active_model
-        ts = Selection.targets(model)
+        ts = Selection.dynamic_targets(model)
         raise "no dynamic components selected" if ts.empty?
 
         classic = []

@@ -36,8 +36,10 @@ module OpenSketchupDC
       menu.add_item("Convert to Open DC") { Commands.convert_selection }
       menu.add_item("Revert to Classic DC") { Commands.revert_selection }
 
-      # Right-click on a dynamic component: same actions, contextual.
-      # Nothing is added for non-DC selections so other menus stay clean.
+      # Right-click on a component or group: same actions, contextual.
+      # Shows for non-dynamic selections too - any component can be
+      # given its first attribute through the panel (like the native
+      # Dynamic Components menu, which also appears on every component).
       UI.add_context_menu_handler do |context_menu|
         next if Selection.targets(Sketchup.active_model).empty?
 

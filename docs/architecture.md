@@ -18,6 +18,13 @@ Observers: SelectionSpy → Panel pushes; EntitySpy on entities + dicts →
            panel refresh + Engine.mark_dirty (osdc owners only)
 ```
 
+Dialogs (panel, graph, node editor, fx reference) follow the Windows
+color mode: `ui/theme.js` applies `html[data-theme]` from
+`prefers-color-scheme` on load, and `Panel.os_theme` reads
+`HKCU\...\Personalize\AppsUseLightTheme` and overrides it via
+`OpenDCTheme.set()` on every state/graph/nodes push. All colors are CSS
+variables — add new colors as vars in both palettes.
+
 ## Invariants
 
 - One engine owns a component at a time (`_engine` marker, dict deleted on
@@ -55,3 +62,5 @@ Observers: SelectionSpy → Panel pushes; EntitySpy on entities + dicts →
 - [ ] Undo: each edit/batch/convert reverts cleanly.
 - [ ] Panel reflects external edits (native Component Options dialog, Ruby
       console).
+- [ ] Dialogs (panel / graph / node editor / fx reference) follow the
+      Windows light/dark app mode, including a flip while open.

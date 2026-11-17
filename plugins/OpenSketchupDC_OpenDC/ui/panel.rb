@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 require "json"
+require "win32/registry" if Sketchup.platform == :platform_win
 
 module OpenSketchupDC
   module OpenDC
@@ -108,6 +109,7 @@ module OpenSketchupDC
         when "reorder"       then cmd_reorder(p)
         when "rename"        then cmd_rename(p)
         when "batchSet"      then cmd_batch_set(p)
+        when "setInstName"   then cmd_set_inst_name(p)
         when "redraw"        then cmd_redraw(p)
         when "validateFormula" then cmd_validate_formula(p)
         when "fxDocs"        then cmd_fx_docs
@@ -229,6 +231,20 @@ module OpenSketchupDC
         end
       end
 
+      # SketchUp instance name (Entity Info "Name") - a plain instance
+      # property, not the DC _name node name. Components only: groups
+      # carry no instance name.
+      def cmd_set_inst_name(p)
+        with_entity(p["entityId"]) do |e|
+          next unless e.is_a?(Sketchup::ComponentInstance)
+
+          Helpers.undo_wrap(Sketchup.active_model, "Open DC: Rename instance") do
+            e.name = p["name"].to_s
+          end
+          push_state
+        end
+      end
+
       def cmd_delete_param(p)
         with_entity(p["entityId"]) do |e|
           dict_name = DCReader.dict_name_for(e)
@@ -284,6 +300,8 @@ module OpenSketchupDC
         ids = p["entityIds"] || []
         entities = ids.map { |id| entity(id) }.compact
         entities.each do |e|
+          next unless DCReader.dynamic?(e)
+
           DCReader.dict_name_for(e) == OS_DC_DICT ? Engine.mark_dirty(e) : DCBridge.redraw!(e)
         end
         push_state
@@ -411,14 +429,40 @@ module OpenSketchupDC
         end
       end
 
+      # The end user's model display unit - what classic "DEFAULT" units
+      # resolve to. INCHES fallback keeps writes sane when unreadable.
+      def model_units
+        DCReader.model_length_units(Sketchup.active_model) || "INCHES"
+      end
+
+      # "DEFAULT" (End user's model units) -> the active model's unit;
+      # everything else passes through.
+      def resolve_units(units)
+        Param.model_units_dependent?(units) ? model_units : units
+      end
+
       # Parse a UI-entered value as a plain number or a unit-suffixed
       # literal (450, -2.5, 10cm, 18", 3', 45deg).
       # Returns [number, suffix_unit|nil] or nil.
       def value_literal(s)
         return [s.to_f, nil] if s =~ /\A-?\d+(\.\d+)?\z/
 
-        m = s.match(/\A(-?\d+(?:\.\d+)?)(mm|cm|m|in|ft|deg|degrees|"|')\z/i)
+        m = s.match(/\A(-?\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft|deg|degrees|"|')\z/i)
         m ? [m[1].to_f, VALUE_SUFFIX_UNITS[m[2].downcase]] : nil
+      end
+
+      # Architectural/fractional literal shape: [feet'][whole][num/den]["]
+      ARCH_INCHES_RE = %r{\A(?:(\d+(?:\.\d+)?)\s*')?\s*(?:(\d+(?:\.\d+)?)\s*)?(?:(\d+)\s*/\s*(\d+)\s*)?"?\z}
+
+      # Architectural/fractional literal -> inches: 3'6", 1' 3 1/4",
+      # 12 1/2", 3/4". Returns nil when the input isn't in that shape -
+      # bare numbers and single-suffix literals go through value_literal.
+      def arch_inches(s)
+        m = s.to_s.strip.match(ARCH_INCHES_RE)
+        return nil if m.nil? || (m[1].nil? && m[2].nil? && m[3].nil?)
+
+        frac = m[3] ? m[3].to_f / m[4].to_i : 0.0
+        m[1].to_f * 12.0 + m[2].to_f + frac
       end
 
       # Type-check a UI-entered value against the param's declared type
@@ -430,7 +474,7 @@ module OpenSketchupDC
         s = raw.to_s.strip
         return nil if s.empty?
 
-        types = [param.units, param.formulaunits].map { |u| u.to_s.upcase }
+        types = [param.units, param.formulaunits].map { |u| resolve_units(u).to_s.upcase }
         label = param.display_name
 
         if types.include?("BOOLEAN") && s !~ /\A(true|false|0|1)\z/i
@@ -452,6 +496,8 @@ module OpenSketchupDC
 
         lit = value_literal(s)
         if lit.nil?
+          return nil if (types & Param::LENGTH_UNITS).any? && arch_inches(s)
+
           return "#{label} expects a number - '#{s}' isn't one " \
                  "(examples: 450, 45.5, 10cm, 18\")"
         end
@@ -484,17 +530,23 @@ module OpenSketchupDC
         return v if v.is_a?(Numeric) || v == true || v == false
 
         s = v.to_s.strip
+        # "DEFAULT" (End user's model units) resolves to the model's unit
+        # for both the display source and the formula/default target.
+        units = resolve_units(units)
+        target_units = resolve_units(target_units)
         num, suffix = s =~ /\A-?\d/ ? value_literal(s) : [nil, nil]
+        if num.nil? && Param.length_unit?(units) && (inches = arch_inches(s))
+          # architectural/fractional input already arrives in inches
+          return inches_for_target(inches, units, dict_name, target_units)
+        end
+
         if num
           if Param.length_unit?(units)
             # bare numbers arrive in display units; a suffixed literal
             # carries its own unit (10cm in a feet field is still 10cm)
             src = suffix && suffix != "DEGREES" ? suffix : units
-            inches = Param.unit_to_inches(num, src)
-            return inches if dict_name == OS_DC_DICT
-
-            target = target_units.to_s.empty? ? units : target_units
-            return Param.inches_to_unit(inches, target)
+            return inches_for_target(Param.unit_to_inches(num, src), units,
+                                     dict_name, target_units)
           end
           # numeric-typed field or a bare number anywhere -> store the
           # number; a length-suffixed literal in a text field stays text
@@ -506,7 +558,40 @@ module OpenSketchupDC
         return true if s == "true"
         return false if s == "false"
 
-        s
+        classic_text(s, dict_name)
+      end
+
+      # Classic's _<name>_formula slot is evaluated by the DC engine, so
+      # prose typed into a text field ("Valles GAL2") must arrive as a
+      # quoted literal or the engine reports a parse error. Input that is
+      # already an expression (lenx*2, "text") passes through; a leading
+      # = marks explicit formula intent and is stripped for storage.
+      # A lone bare word ("CPL", parent!x) is still prose - the engine
+      # resolves it as an unknown attribute reference and errors.
+      # open_dc's value slot is a literal, never evaluated - passes raw.
+      def classic_text(s, dict_name)
+        return s unless dict_name == DC_DICT
+
+        f = Expression.strip_eq(s)
+        ast = expression_ast(f)
+        return f if ast && (s != f || !%i[var ref].include?(ast[0]))
+
+        s.include?('"') ? s : %("#{s}")
+      end
+
+      def expression_ast(src)
+        Expression.parse(src.to_s)
+      rescue Expression::Error
+        nil
+      end
+
+      # inches -> stored form: open_dc keeps inches; classic converts to
+      # the write target (formulaunits, or the display units when empty).
+      def inches_for_target(inches, units, dict_name, target_units)
+        return inches if dict_name == OS_DC_DICT
+
+        target = target_units.to_s.empty? ? units : target_units
+        Param.inches_to_unit(inches, target)
       end
 
       def param_units(entity, name)
@@ -535,20 +620,53 @@ module OpenSketchupDC
           ["node!name", "attribute on a sibling node"],
           ["copy", "index of this generated copy (when copies &gt; 0)"]
         ]],
-        ["Functions", [
+        ["Logical", [
           ["IF(test, then, else)", "conditional value"],
+          ["AND(a, b, ...) / OR(a, b, ...) / NOT(a)", "also usable as infix keywords"],
+          ["TRUE() / FALSE()", "boolean literals"]
+        ]],
+        ["Math", [
+          ["MIN(a, b, ...) / MAX(a, b, ...)", "smallest / largest of the arguments"],
+          ["ROUND(x, n) / INT(x)", "round to n digits / round down"],
+          ["FLOOR(x, sig) / CEILING(x, sig)", "round to a multiple (significance optional)"],
+          ["EVEN(x) / ODD(x)", "round away from zero to even / odd"],
+          ["ISEVEN(x) / ISODD(x)", "TRUE when the integer part is even / odd"],
+          ["ABS(x) / SQRT(x) / SIGN(x)", "absolute value / square root / -1, 0, 1"],
+          ["EXP(x) / LN(x) / LOG10(x)", "e^x / natural log / base-10 log"],
+          ["RAND() / RANDBETWEEN(lo, hi)", "random 0..1 / random integer lo..hi"],
+          ["PI() / DEGREES(rad) / RADIANS(deg)", "pi / angle conversion"]
+        ]],
+        ["Trigonometry (degrees)", [
+          ["SIN / COS / TAN", "sine / cosine / tangent"],
+          ["ASIN / ACOS / ATAN", "inverse sine / cosine / tangent"],
+          ["SINH / COSH / TANH", "hyperbolic sine / cosine / tangent"],
+          ["ASINH / ACOSH / ATANH", "inverse hyperbolic functions"]
+        ]],
+        ["Text", [
+          ["CONCATENATE(t1, t2, ...)", "join strings; same as \"a\" &amp; \"b\""],
+          ["LEFT(t, n) / RIGHT(t, n) / MID(t, start, n)", "substring; positions are 1-based"],
+          ["LEN(t) / TRIM(t)", "length / collapse whitespace"],
+          ["LOWER(t) / UPPER(t) / PROPER(t)", "case conversion"],
+          ["CHAR(n) / CODE(t)", "character &lt;-&gt; code table value"],
+          ["FIND(find, text, pos)", "1-based position of find in text; 0 when absent"],
+          ["REPLACE(t, start, n, new)", "replace n characters at start"],
+          ["SUBSTITUTE(t, old, new, occ)", "replace all / the occ-th occurrence"],
+          ["REPT(t, n)", "repeat text n times"],
+          ["EXACT(a, b)", "case-sensitive equality"],
+          ["VALUE(t) / DOLLAR(v, dec)", "text to number / currency format"]
+        ]],
+        ["SketchUp", [
           ["CHOOSE(index, v1, v2, ...)", "pick the index-th value (1-based)"],
           ["CURRENT(\"name\")", "current value of an attribute"],
-          ["MIN(a, b, ...) / MAX(a, b, ...)", "smallest / largest of the arguments"],
-          ["ROUND(x, n) / INT / FLOOR / CEILING", "rounding"],
-          ["ABS(x) / SQRT(x)", "absolute value / square root"],
-          ["SIN / COS / TAN / ASIN / ACOS / ATAN", "trigonometry (radians)"],
-          ["DEGREES(rad) / RADIANS(deg)", "angle conversion"],
-          ["PI()", "3.14159..."],
           ["LARGEST / SMALLEST(list, k)", "k-th largest / smallest value"],
           ["NEAREST(x, v1, v2, ...)", "the listed value closest to x"],
           ["OPTIONINDEX(\"name\")", "index of the selected LIST option"],
-          ["OPTIONVALUE(\"name\", \"label\")", "value mapped to a LIST option label"]
+          ["OPTIONVALUE(\"name\", \"label\")", "value mapped to a LIST option label"],
+          ["OPTIONLABEL(\"name\")", "label of the current LIST option"],
+          ["EDGES() / FACES()", "ungrouped edge / face count in this component"],
+          ["FACEAREA(\"material\")", "face area in square inches (material optional)"],
+          ["LAT() / LNG()", "model latitude / longitude"],
+          ["SUNANGLE() / SUNELEVATION()", "sun azimuth / altitude"]
         ]],
         ["Actions (onClick only)", [
           ["SET(\"name\", v1, v2, ...)", "cycle the attribute through the values"],
@@ -681,6 +799,7 @@ module OpenSketchupDC
       def push_graph
         return if @graph_dialog.nil? || @graph_pending.nil?
 
+        push_theme(@graph_dialog)
         json = JSON.generate(json_safe(@graph_pending))
         @graph_dialog.execute_script("window.renderGraph && window.renderGraph(#{json})")
       end
@@ -801,6 +920,7 @@ module OpenSketchupDC
       def push_nodes
         return if @nodes_dialog.nil? || @nodes_pending.nil?
 
+        push_theme(@nodes_dialog)
         json = JSON.generate(json_safe(@nodes_pending))
         @nodes_dialog.execute_script("window.renderNodes && window.renderNodes(#{json})")
       end
@@ -850,26 +970,40 @@ module OpenSketchupDC
         push_nodes_status("ok" => false, "errors" => [e.message])
       end
 
-      def functions_reference_html
-        rows = FX_REFERENCE.map do |section, items|
+      def functions_reference_rows
+        FX_REFERENCE.map do |section, items|
           "<h2>#{section}</h2><table>" +
             items.map do |sig, desc|
               "<tr><td class='sig'>#{sig}</td><td class='desc'>#{desc}</td></tr>"
             end.join("") + "</table>"
         end.join("")
+      end
+
+      def functions_reference_html
         <<~HTML
-          <!DOCTYPE html><html><head><meta charset="utf-8"><style>
-            body{background:#17181c;color:#d8d8de;font:13px/1.5 "Segoe UI",sans-serif;margin:14px}
-            h1{font-size:15px;margin:0 0 10px;color:#4f9cf9}
-            h2{font-size:12px;text-transform:uppercase;color:#8a8a93;margin:16px 0 6px;border-bottom:1px solid #2a2b31;padding-bottom:4px}
+          <!DOCTYPE html><html><head><meta charset="utf-8">
+          <script>(function(){var f=#{JSON.generate(os_theme)},m=matchMedia("(prefers-color-scheme: light)");
+          function a(){document.documentElement.setAttribute("data-theme",
+          f||(m.matches?"light":"dark"))}
+          m.addEventListener&&m.addEventListener("change",a);a()})();</script>
+          <style>
+            :root{color-scheme:dark;--bg:#17181c;--bg2:#1e1f24;--fg:#d8d8de;
+              --dim:#a9a9b2;--muted:#8a8a93;--accent:#4f9cf9;--fn:#b9a5f0;
+              --border:#2a2b31}
+            :root[data-theme=light]{color-scheme:light;--bg:#f1f2f4;
+              --bg2:#ffffff;--fg:#23252d;--dim:#565b66;--muted:#747a88;
+              --accent:#0d6dd8;--fn:#7a5cd0;--border:#d3d6dc}
+            body{background:var(--bg);color:var(--fg);font:11.5px/1.5 "Segoe UI",sans-serif;margin:14px}
+            h1{font-size:13.5px;margin:0 0 10px;color:var(--accent)}
+            h2{font-size:11px;text-transform:uppercase;color:var(--muted);margin:16px 0 6px;border-bottom:1px solid var(--border);padding-bottom:4px}
             table{width:100%;border-collapse:collapse}
             td{padding:3px 6px;vertical-align:top}
-            tr:nth-child(odd){background:#1e1f24}
-            .sig{font-family:Consolas,monospace;color:#b9a5f0;white-space:nowrap;width:45%}
-            .desc{color:#a9a9b2}
+            tr:nth-child(odd){background:var(--bg2)}
+            .sig{font-family:Consolas,monospace;color:var(--fn);white-space:nowrap;width:45%}
+            .desc{color:var(--dim)}
           </style></head><body>
           <h1>Formula Reference</h1>
-          #{rows}
+          #{functions_reference_rows}
           </body></html>
         HTML
       end
@@ -877,6 +1011,29 @@ module OpenSketchupDC
       # ------------------------------------------------------------------
       # Ruby -> JS state push
       # ------------------------------------------------------------------
+
+      # OS color mode for the HtmlDialogs: "light"/"dark" on Windows from
+      # the AppsUseLightTheme personalization flag, nil elsewhere so the
+      # page falls back to its own prefers-color-scheme detection.
+      def os_theme
+        return nil unless Sketchup.platform == :platform_win
+
+        Win32::Registry::HKEY_CURRENT_USER.open(
+          'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+        ) { |r| r["AppsUseLightTheme"].to_i.zero? ? "dark" : "light" }
+      rescue StandardError
+        nil
+      end
+
+      # theme.js owns html[data-theme]; a nil push hands control back to
+      # the page's media query. Re-pushed on every state update so OS
+      # mode flips reach open dialogs.
+      def push_theme(dialog)
+        return if dialog.nil?
+
+        t = JSON.generate(os_theme)
+        dialog.execute_script("window.OpenDCTheme && window.OpenDCTheme.set(#{t})")
+      end
 
       def schedule_push
         return if @push_pending
@@ -891,6 +1048,7 @@ module OpenSketchupDC
       def push_state
         return if @dialog.nil?
 
+        push_theme(@dialog)
         json = JSON.generate(json_safe(state(Sketchup.active_model)))
         @dialog.execute_script("window.OpenDC && window.OpenDC.update(#{json})")
         Observers.watch_current(Sketchup.active_model)
@@ -941,18 +1099,23 @@ module OpenSketchupDC
           "entities" => sets.each_with_index.map do |ps, i|
             h = ps.to_h
             h["label"] = entity_label(ts[i])
+            h["instanceName"] = instance_name_of(ts[i])
             h["engine"] = ps.engine.to_s
+            h["dynamic"] = DCReader.dynamic?(ts[i])
             h["graph"] = entity_graph(ps)
             h
           end,
-          "batch" => batch_state(sets)
+          "batch" => batch_state(sets, ts)
         }
       end
 
-      def batch_state(sets)
-        return nil if sets.length < 2
+      # Batch edits only make sense across already-dynamic targets - a
+      # plain component contributes no params to the intersection.
+      def batch_state(sets, targets)
+        dyn = sets.zip(targets).select { |_, t| DCReader.dynamic?(t) }.map(&:first)
+        return nil if dyn.length < 2
 
-        { "count" => sets.length, "shared" => Selection.shared_params(sets) }
+        { "count" => dyn.length, "shared" => Selection.shared_params(dyn) }
       end
 
       # Read-only dependency graph for the Graph tab: nodes are params plus
@@ -997,8 +1160,9 @@ module OpenSketchupDC
         extdeps.each_key { |n| used[n] = true }
         cyclic.each { |n| used[n] = true }
         # editable graph: non-internal params stay visible as wire targets
-        # even when they have no edges yet
-        names.each { |n| used[n] = true unless ps[n]&.internal }
+        # even when they have no edges yet (builtins stay out - they are
+        # live display rows, not stored attributes)
+        names.each { |n| used[n] = true unless ps[n]&.internal || ps[n]&.builtin? }
 
         nodes = names.select { |n| used[n] }.map do |n|
           { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n),
@@ -1035,6 +1199,7 @@ module OpenSketchupDC
         end
         if n
           tu = target_p&.formulaunits.to_s.empty? ? target_p&.units : target_p.formulaunits
+          tu = resolve_units(tu)
           n = Param.inches_to_unit(n, tu) if Param.length_unit?(tu)
           n.round(6).to_s
         else
@@ -1047,6 +1212,10 @@ module OpenSketchupDC
         DCReader.attr_names(dict).sort.map do |n|
           { "name" => n, "value" => DCReader.dict_get(dict, n) }
         end
+      end
+
+      def instance_name_of(e)
+        e.is_a?(Sketchup::ComponentInstance) ? e.name.to_s : nil
       end
 
       def entity_label(e)

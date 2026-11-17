@@ -23,6 +23,9 @@ module OpenSketchupDC
                          Hidden Copies Copy Material ScaleTool onClick
                          Name Summary Description ItemCode Creator].freeze
 
+      # SketchUp UnitsOptions LengthUnit codes -> our unit tokens.
+      MODEL_LENGTH_UNITS = %w[INCHES FEET MILLIMETERS CENTIMETERS METERS].freeze
+
       module_function
 
       # --- dict access abstraction -----------------------------------------
@@ -49,18 +52,156 @@ module OpenSketchupDC
       # entity: Sketchup::ComponentInstance | Sketchup::Group
       def read(entity, dict_name: DC_DICT, entity_id: nil)
         engine = dict_name == OS_DC_DICT ? :osdc : :classic
-        if component?(entity)
-          build(dict_of(entity.definition, dict_name),
-                dict_of(entity, dict_name),
-                kind: :component, engine: engine, entity_id: entity_id)
-        else
-          build(nil, dict_of(entity, dict_name),
-                kind: :group, engine: engine, entity_id: entity_id)
+        mu = model_length_units(entity)
+        ps =
+          if component?(entity)
+            build(dict_of(entity.definition, dict_name),
+                  dict_of(entity, dict_name),
+                  kind: :component, engine: engine, entity_id: entity_id,
+                  model_units: mu)
+          else
+            build(nil, dict_of(entity, dict_name),
+                  kind: :group, engine: engine, entity_id: entity_id,
+                  model_units: mu)
+          end
+        append_builtins(ps, entity, dict_name, mu)
+        apply_display_strings(ps)
+        ps
+      end
+
+      # End user's model display unit (UnitsOptions.LengthUnit) - what the
+      # classic "DEFAULT" _<attr>_units resolves to. Accepts an entity or
+      # the model itself (Sketchup::Model has no #model). nil when
+      # unreadable.
+      def model_length_units(entity_or_model)
+        model = entity_or_model
+        model = model.model if model.respond_to?(:model)
+        MODEL_LENGTH_UNITS[model.options["UnitsOptions"]["LengthUnit"].to_i]
+      rescue StandardError
+        nil
+      end
+
+      # DEFAULT-unit params get a SketchUp-formatted Length string that
+      # honors the model's unit AND format (decimal, architectural,
+      # engineering, fractional) plus precision. The numeric
+      # displayValue/displayUnits stay behind as editable fallbacks.
+      def apply_display_strings(ps)
+        ps.params.each do |p|
+          next unless Param.model_units_dependent?(p.units)
+
+          p.display_string = length_string(p.value)
+          p.display_default_string = length_string(p.default)
         end
+      end
+
+      def length_string(v)
+        return nil if v.nil?
+
+        n = v.is_a?(Numeric) ? v : Float(v.to_s)
+        n.to_l.to_s
+      rescue StandardError
+        nil
       end
 
       def component?(entity)
         entity.is_a?(Sketchup::ComponentInstance)
+      end
+
+      # --- built-in attributes (computed live, not stored) ----------------
+
+      # Display units per synthesized builtin. "DEFAULT" resolves to the
+      # end user's model units, same as a stored _<attr>_units.
+      BUILTIN_UNITS = {
+        "x" => "DEFAULT", "y" => "DEFAULT", "z" => "DEFAULT",
+        "lenx" => "DEFAULT", "leny" => "DEFAULT", "lenz" => "DEFAULT",
+        "rotx" => "DEGREES", "roty" => "DEGREES", "rotz" => "DEGREES",
+        "hidden" => "BOOLEAN", "material" => "STRING"
+      }.freeze
+
+      # Units a bare number in a _<attr>_formula slot is interpreted in:
+      # inches for lengths, degrees for rotations (classic defaults).
+      BUILTIN_FORMULAUNITS = {
+        "x" => "INCHES", "y" => "INCHES", "z" => "INCHES",
+        "lenx" => "INCHES", "leny" => "INCHES", "lenz" => "INCHES",
+        "rotx" => "DEGREES", "roty" => "DEGREES", "rotz" => "DEGREES"
+      }.freeze
+
+      # Appends computed params for every built-in attribute not already
+      # claimed by a dict key. The classic engine resolves these names
+      # implicitly on any component; we surface the same values so the
+      # panel shows them (and formulas can reference them) everywhere.
+      # A stored-but-unevaluated builtin attr (adopted by writing only a
+      # _<name>_formula/meta slot, cache not yet written) still shows the
+      # live transform value as its current state.
+      def append_builtins(ps, entity, dict_name, model_units)
+        builtin_values(entity, dict_name).each do |name, v|
+          if (p = ps[name])
+            p.value = v if p.value.nil?
+            next
+          end
+          ps.params << builtin_param(name, v, model_units)
+        end
+      rescue StandardError
+        ps
+      end
+
+      def builtin_param(name, v, model_units)
+        cased = BUILTIN_ATTRS.find { |b| b.casecmp(name).zero? } || name.capitalize
+        Param.new(name,
+                  value: v,
+                  label: cased, formlabel: cased,
+                  access: ACCESS_TEXTBOX,
+                  units: BUILTIN_UNITS[name],
+                  formulaunits: BUILTIN_FORMULAUNITS[name],
+                  model_units: model_units,
+                  tooltip: "Built-in SketchUp attribute - editing adopts it into the component",
+                  builtin: true)
+      end
+
+      # Live values for every builtin we synthesize, read straight off the
+      # entity's transform/bounds/flags (inches, degrees).
+      def builtin_values(entity, dict_name)
+        t = entity.transformation
+        o = t.origin.to_a
+        rx, ry, rz = euler_angles(t)
+        lens = %w[x y z].zip(t.axes).map do |a, ax|
+          Applier.nominal(entity, a, dict_name).to_f * ax.length
+        end
+
+        {
+          "x" => o[0], "y" => o[1], "z" => o[2],
+          "lenx" => lens[0], "leny" => lens[1], "lenz" => lens[2],
+          "rotx" => rx, "roty" => ry, "rotz" => rz,
+          "hidden" => entity.hidden?,
+          "material" => material_name(entity)
+        }
+      end
+
+      # Rotation part of a transform as Euler angles matching Applier's
+      # composition (R = Rx * Ry * Rz). Falls back to zeros for degenerate
+      # matrices; gimbal lock picks rotx = 0.
+      def euler_angles(t)
+        xa = t.xaxis.normalize
+        ya = t.yaxis.normalize
+        za = t.zaxis.normalize
+        sy = za.x.to_f.clamp(-1.0, 1.0)
+        roty = Math.asin(sy)
+        rotx, rotz =
+          if sy.abs > 0.9999
+            [0.0, Math.atan2(xa.y, xa.x)]
+          else
+            [Math.atan2(-za.y, za.z), Math.atan2(-ya.x, xa.x)]
+          end
+        [rotx, roty, rotz].map { |a| a * 180.0 / Math::PI }
+      rescue StandardError
+        [0.0, 0.0, 0.0]
+      end
+
+      def material_name(entity)
+        m = entity.material
+        return "" if m.nil?
+
+        m.respond_to?(:name) ? m.name.to_s : m.to_s
       end
 
       # Is this entity dynamic at all (either engine)?
@@ -91,7 +232,8 @@ module OpenSketchupDC
 
       # --- pure core (Hash-friendly) ---------------------------------------
 
-      def build(def_dict, inst_dict, kind:, engine: :classic, entity_id: nil)
+      def build(def_dict, inst_dict, kind:, engine: :classic, entity_id: nil,
+                model_units: nil)
         base = kind == :group ? inst_dict : def_dict
         return ParamSet.new(entity_id: entity_id, kind: kind, engine: engine) if base.nil? && inst_dict.nil?
 
@@ -109,7 +251,7 @@ module OpenSketchupDC
         ordered = order & names
         leftover = (names - ordered).sort
         params = (ordered + leftover).map do |n|
-          p = param_for(n, base, inst_dict, kind)
+          p = param_for(n, base, inst_dict, kind, model_units)
           p.section = sections[n]
           p
         end
@@ -119,44 +261,55 @@ module OpenSketchupDC
                      node_name: node, params: params)
       end
 
-      # Non-underscore keys are user attributes.
+      # Meta fields whose _<attr>_<field> key marks a user attribute even
+      # without a plain <attr> value key - e.g. a builtin adopted by
+      # writing _x_formula, or an attr whose cache the engine hasn't
+      # materialized yet. Engine-written status keys (_error, _display,
+      # _nominal) are excluded: they can outlive the attribute itself.
+      # (.+?) stays non-greedy so _x_formulaunits maps to attr "x".
+      INPUT_META_FIELDS = (META_FIELDS - %w[error display nominal]).freeze
+      INPUT_META_RE = /\A_(?!inst_)(.+?)_(#{INPUT_META_FIELDS.join('|')})\z/
+      INST_META_RE = /\A_inst__(.+?)_(#{INPUT_META_FIELDS.join('|')})\z/
+
+      # Non-underscore keys are user attributes; so is a user-input
+      # _<attr>_<meta> cluster key (see INPUT_META_FIELDS).
       def attr_names(dict)
-        dict_keys(dict).reject { |k| k.start_with?("_") }.map(&:downcase)
+        dict_keys(dict).reject { |k| k.start_with?("_") }.map(&:downcase) |
+          meta_attr_names(dict)
       end
 
-      # Instance-side names: plain overrides + nested _inst_<attr> values.
+      def meta_attr_names(dict)
+        dict_keys(dict).filter_map do |k|
+          next if SYSTEM_KEYS.include?(k.downcase)
+
+          (m = k.match(INPUT_META_RE)) && m[1].downcase
+        end
+      end
+
+      # Instance-side names: plain overrides + nested _inst_<attr> values
+      # + _inst__<attr>_<meta> input clusters.
       def inst_attr_names(dict)
         return [] if dict.nil?
 
         plain = attr_names(dict)
         nested = dict_keys(dict).filter_map do |k|
-          m = k.match(/\A_inst_(?!_)(.+)\z/)
-          m && m[1].downcase
+          (m = k.match(/\A_inst_(?!_)(.+)\z/) || k.match(INST_META_RE)) &&
+            m[1].downcase
         end
         plain | nested
       end
 
-      def param_for(name, base, inst, kind)
+      def param_for(name, base, inst, kind, model_units = nil)
         override = nil
         override_meta = {}
 
         if kind == :component && inst
           override = dict_key?(inst, name) ? dict_get(inst, name) : dict_get(inst, "_inst_#{name}")
-          META_FIELDS.each do |f|
-            # Per-instance meta overrides live in two places: _inst__<a>_<f>
-            # (nested-component form) and plain _<a>_<f> on the instance dict,
-            # which is where classic DC stores per-instance formula overrides.
-            v = dict_get(inst, "_inst__#{name}_#{f}")
-            v = dict_get(inst, "_#{name}_#{f}") if v.nil?
-            override_meta[f] = v unless v.nil?
-          end
+          override_meta = instance_meta(inst, name)
         end
 
         default = dict_get(base, name)
-        meta = {}
-        META_FIELDS.each do |f|
-          meta[f] = override_meta.key?(f) ? override_meta[f] : dict_get(base, "_#{name}_#{f}")
-        end
+        meta = merged_meta(base, override_meta, name)
 
         Param.new(name,
                   value: override.nil? ? default : override,
@@ -168,9 +321,36 @@ module OpenSketchupDC
                   access: meta["access"],
                   options: meta["options"],
                   units: meta["units"],
+                  model_units: model_units,
                   tooltip: meta["tooltip"],
                   overridden: kind == :component && !override.nil? && override != default,
                   error: param_error(base, name))
+      end
+
+      # Per-instance meta overrides live in two places: _inst__<a>_<f>
+      # (nested-component form) and plain _<a>_<f> on the instance dict,
+      # which is where classic DC stores per-instance formula overrides.
+      def instance_meta(inst, name)
+        out = {}
+        META_FIELDS.each do |f|
+          v = dict_get(inst, "_inst__#{name}_#{f}")
+          v = dict_get(inst, "_#{name}_#{f}") if v.nil?
+          out[f] = v unless v.nil?
+        end
+        out
+      end
+
+      # Instance meta wins over definition meta. Builtin attrs (x, lenx,
+      # rotz, ...) default to classic's units when nothing overrides them:
+      # model units for lengths, degrees for rotations, inches in formulas.
+      def merged_meta(base, override_meta, name)
+        meta = {}
+        META_FIELDS.each do |f|
+          meta[f] = override_meta.key?(f) ? override_meta[f] : dict_get(base, "_#{name}_#{f}")
+        end
+        meta["units"] ||= BUILTIN_UNITS[name]
+        meta["formulaunits"] ||= BUILTIN_FORMULAUNITS[name]
+        meta
       end
 
       # _<attr>_error stores the last formula-eval status: an HTML span

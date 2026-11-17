@@ -12,7 +12,7 @@ module OpenSketchupDC
         model = Helpers.require_model
         return unless model
 
-        ts = Selection.targets(model).select { |t| DCReader.engine_of(t) == :classic }
+        ts = Selection.dynamic_targets(model).select { |t| DCReader.engine_of(t) == :classic }
         if ts.empty?
           UI.messagebox("Select one or more classic dynamic components to convert.")
           return
@@ -27,7 +27,7 @@ module OpenSketchupDC
         model = Helpers.require_model
         return unless model
 
-        ts = Selection.targets(model).select { |t| DCReader.engine_of(t) == :osdc }
+        ts = Selection.dynamic_targets(model).select { |t| DCReader.engine_of(t) == :osdc }
         if ts.empty?
           UI.messagebox("Select one or more Open DC components to revert.")
           return
@@ -47,7 +47,7 @@ module OpenSketchupDC
         model = Helpers.require_model
         return unless model
 
-        ts = Selection.targets(model)
+        ts = Selection.dynamic_targets(model)
         ts.each do |t|
           if DCReader.engine_of(t) == :osdc
             Engine.mark_dirty(t)
