@@ -109,6 +109,10 @@ module OpenSketchupDC
           v
         when "sketchup"
           SkProps.value_of(path[-1], name, dict_name: DCReader.dict_name_for(path[-1]))
+        when "model"
+          SkProps.model_value_of(path[-1], name)
+        when "scene"
+          SkProps.scene_value_of(path[-1], name)
         else
           ctx = path.length >= 2 ? path[-2] : nil
           sib = node_named(scope, ctx, path[-1], model)

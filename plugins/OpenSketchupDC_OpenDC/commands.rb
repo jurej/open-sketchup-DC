@@ -12,9 +12,11 @@ module OpenSketchupDC
         model = Helpers.require_model
         return unless model
 
-        ts = Selection.dynamic_targets(model).select { |t| DCReader.engine_of(t) == :classic }
+        # Any selected component/group converts - a plain entity gets a
+        # fresh open_dc dict, a classic one migrates its attributes.
+        ts = Selection.targets(model).select { |t| DCReader.engine_of(t) != :osdc }
         if ts.empty?
-          UI.messagebox("Select one or more classic dynamic components to convert.")
+          UI.messagebox("Select one or more components or groups to convert.")
           return
         end
 

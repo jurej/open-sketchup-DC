@@ -280,6 +280,16 @@
         return addItem("ref", "sketchup!" + n);
       })));
     }
+    if ((state.modelprops || []).length) {
+      attrSubs.push(sub("Model", state.modelprops.map(function (n) {
+        return addItem("ref", "model!" + n);
+      })));
+    }
+    if ((state.sceneprops || []).length) {
+      attrSubs.push(sub("Scene", state.sceneprops.map(function (n) {
+        return addItem("ref", "scene!" + n);
+      })));
+    }
     if ((state.dicts || []).length) {
       attrSubs.push(sub("Dictionaries", state.dicts.map(function (n) {
         return addItem("ref", n);

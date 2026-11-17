@@ -171,7 +171,7 @@ via `name!` (use `DICTATTR` for the dict).
 | `instname` | instance name (Entity Info "Name"), components only | yes |
 | `description` | definition / group description | yes |
 | `summary`, `itemcode`, `creator` | definition Info fields | yes — components only |
-| `layer` | assigned layer/tag name | yes — the layer must already exist |
+| `layer` | assigned layer/tag name | yes — an unknown name falls back to Untagged (Layer0) |
 | `guid`, `persistentid`, `entityid`, `typename` | entity/definition ids | read-only |
 | `instances` | `definition.count_used_instances` | read-only |
 | `x y z lenx/y/z rotx/y/z hidden material` | same live values as the synthesized builtins | read-only here (write via adopted attributes) |
@@ -182,6 +182,22 @@ via `name!` (use `DICTATTR` for the dict).
 Panel writes go straight to the entity/definition (`SkProps.write`),
 never through `DCWriter` — no dict adoption, so they can't drive the
 applier.
+
+## `model!` / `scene!` — global SketchUp inputs (osdc formulas)
+
+Two more reserved, read-only scopes cover model-level and active-scene
+state — everything the old `LAT`/`LNG`/`SUNANGLE` functions implied,
+plus file and scene metadata, usable as ordinary input nodes:
+
+| scope | values |
+|---|---|
+| `model!` | `name`, `title`, `filename`, `path`, `description`, `units`, `lat`, `lng`, `northangle`, `georeferenced`, `scenecount` |
+| `scene!` | `name`, `description`, `usetime`, `transitiontime`, `pagetime` |
+
+Both are reserved like `sketchup`: a sibling node or dictionary named
+`model`/`scene` can't be reached via `name!` (a dict stays reachable
+through `DICTATTR`). They're read-only — `driver_target` refuses
+`model!`/`scene!` drivers, so a param named `model!foo` is inert.
 
 ## Attribute dictionaries — `dictname!key` and `DICTATTR`
 

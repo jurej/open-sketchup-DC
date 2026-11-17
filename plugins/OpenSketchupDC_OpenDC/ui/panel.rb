@@ -429,6 +429,12 @@ module OpenSketchupDC
           when "sketchup"
             errors << "unknown SketchUp attribute '#{n}'" unless SkProps.known?(n)
             hints << osdc_only("sketchup!#{n}", dict_name)
+          when "model"
+            errors << "unknown model attribute '#{n}'" unless SkProps::MODEL_PROP_NAMES.include?(n)
+            hints << osdc_only("model!#{n}", dict_name)
+          when "scene"
+            errors << "unknown scene attribute '#{n}'" unless SkProps::SCENE_PROP_NAMES.include?(n)
+            hints << osdc_only("scene!#{n}", dict_name)
           else
             node = top_level?(entity) &&
                    Interact.node_named(scope, nil, entity, Sketchup.active_model)
@@ -703,6 +709,8 @@ module OpenSketchupDC
           ["global!name", "model-global attribute (open_dc)"],
           ["node!name", "attribute on a sibling node"],
           ["sketchup!name", "native property: name, instname, description, layer, guid, x, lenx, ..."],
+          ["model!name", "model global: name, title, units, lat, lng, northangle, ..."],
+          ["scene!name", "active scene: name, description, transitiontime, ..."],
           ["dictname!key", "attribute-dictionary value (any dict on this component)"],
           ["copy", "index of this generated copy (when copies &gt; 0)"]
         ]],
@@ -889,6 +897,8 @@ module OpenSketchupDC
             "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
             "skprops" => SkProps::PROP_NAMES,
+            "modelprops" => SkProps::MODEL_PROP_NAMES,
+            "sceneprops" => SkProps::SCENE_PROP_NAMES,
             "dicts" => dict_scope_names(ent),
             "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
             "functions" => Expression::FUNCTIONS,
@@ -1024,6 +1034,8 @@ module OpenSketchupDC
             "attrs" => ps.names.reject { |n| SkProps.driver_name?(n) },
             "builtins" => DCReader::BUILTIN_ATTRS,
             "skprops" => SkProps::PROP_NAMES,
+            "modelprops" => SkProps::MODEL_PROP_NAMES,
+            "sceneprops" => SkProps::SCENE_PROP_NAMES,
             "dicts" => dict_scope_names(ent),
             "globals" => global_params(Sketchup.active_model).map { |g| g["name"] },
             "functions" => Expression::FUNCTIONS,
@@ -1257,9 +1269,19 @@ module OpenSketchupDC
       end
 
       # Called by the entity observer for both entities and dictionaries.
+      # Dictionary changes resolve through @dict_owners; entity-level
+      # changes (transform/scale/move, hidden, material, layer) arrive
+      # with the entity or its definition - recompute the owning target
+      # so live builtins like lenx stay current.
       def on_entity_changed(e)
-        owner = Observers.owner_of_dict(e)
-        Engine.mark_dirty(owner) if owner && DCReader.engine_of(owner) == :osdc
+        targets = if (owner = Observers.owner_of_dict(e))
+                    [owner]
+                  else
+                    Observers.targets_of(e)
+                  end
+        targets.each do |t|
+          Engine.mark_dirty(t) if DCReader.engine_of(t) == :osdc
+        end
         schedule_push
       end
 
@@ -1279,6 +1301,8 @@ module OpenSketchupDC
           "actions" => Expression::Evaluator::ACTIONS,
           "builtins" => DCReader::BUILTIN_ATTRS,
           "skprops" => SkProps::PROP_NAMES,
+          "modelprops" => SkProps::MODEL_PROP_NAMES,
+          "sceneprops" => SkProps::SCENE_PROP_NAMES,
           "globals" => global_params(model),
           "entities" => sets.each_with_index.map do |ps, i|
             h = ps.to_h
@@ -1378,10 +1402,11 @@ module OpenSketchupDC
         end
         extdeps.each_key { |n| used[n] = true }
         cyclic.each { |n| used[n] = true }
-        # editable graph: non-internal params stay visible as wire targets
-        # even when they have no edges yet (builtins stay out - they are
-        # live display rows, not stored attributes)
-        names.each { |n| used[n] = true unless ps[n]&.internal || ps[n]&.builtin? }
+        # Editable graph: every non-internal param stays visible as a
+        # wire target even with no edges yet - builtins included, since
+        # wiring one writes a formula and adopts it (that's how lenx or
+        # onclick gain behavior in the first place).
+        names.each { |n| used[n] = true unless ps[n]&.internal }
 
         nodes = names.select { |n| used[n] }.map do |n|
           { "id" => n, "level" => level[n] || 0, "cyclic" => cyclic.include?(n),

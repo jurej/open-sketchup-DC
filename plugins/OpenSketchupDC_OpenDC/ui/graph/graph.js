@@ -537,6 +537,16 @@
         return addItem("ref", "sketchup!" + n);
       })));
     }
+    if ((pal.modelprops || []).length) {
+      attrSubs.push(sub2("Model", pal.modelprops.map(function (n) {
+        return addItem("ref", "model!" + n);
+      })));
+    }
+    if ((pal.sceneprops || []).length) {
+      attrSubs.push(sub2("Scene", pal.sceneprops.map(function (n) {
+        return addItem("ref", "scene!" + n);
+      })));
+    }
     if ((pal.dicts || []).length) {
       attrSubs.push(sub2("Dictionaries", pal.dicts.map(function (n) {
         return addItem("ref", n);

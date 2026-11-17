@@ -31,9 +31,15 @@ module OpenSketchupDC
         cur = entity.transformation
         pos, rot = effective_transform(cur, values)
         scale = scale_factors(entity, values, dict_name, cur)
+        t = compose_transform(pos, rot, scale)
+        # A no-op recompute must not rewrite the transform - identical
+        # writes still dirty the model and (on deferred observer
+        # notifications) could feed a recompute -> change -> recompute
+        # cycle.
+        return if transform_equal?(cur, t)
 
         begin
-          entity.transformation = compose_transform(pos, rot, scale)
+          entity.transformation = t
         rescue StandardError => e
           # Last-resort guard - a singular matrix must never pop a modal.
           puts "Open DC: transform skipped on #{entity}: #{e.message}"
@@ -74,8 +80,8 @@ module OpenSketchupDC
       # the transform's current scale otherwise (preserves stretch on
       # attrs the engine doesn't control).
       def scale_factors(entity, values, dict_name, cur)
-        cur_scale = { "x" => cur.xaxis.length, "y" => cur.yaxis.length,
-                      "z" => cur.zaxis.length }
+        cur_scale = { "x" => cur.xscale, "y" => cur.yscale,
+                      "z" => cur.zscale }
         %w[x y z].map do |axis|
           len = values["len#{axis}"]
           next cur_scale[axis] if len.nil?
@@ -216,6 +222,10 @@ module OpenSketchupDC
         owner.set_attribute(dict_name, key, nil) if cur.to_s.start_with?(APPLY_ERR_PREFIX)
       rescue StandardError
         nil
+      end
+
+      def transform_equal?(a, b)
+        a.to_a.zip(b.to_a).all? { |x, y| (x - y).abs < 1e-9 }
       end
 
       def truthy(v)

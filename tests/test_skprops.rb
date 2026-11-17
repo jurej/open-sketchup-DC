@@ -82,6 +82,10 @@ class TestSkProps < Minitest::Test
     assert_equal [:dict, "d", "k"], P.driver_target("d!k")
     assert_nil P.driver_target("x")
     assert_nil P.driver_target("d!")
+    # model!/scene! are reserved read-only scopes - never writable.
+    assert_nil P.driver_target("model!name")
+    assert_nil P.driver_target("scene!name")
+    assert_nil P.driver_target("MODEL!units")
   end
 
   # _<name>_formula discovery must round-trip "!" in attr names - a
@@ -101,5 +105,20 @@ class TestSkProps < Minitest::Test
     assert P::PROP_NAMES.include?("guid")
     refute P::WRITABLE.include?("guid")
     refute P::WRITABLE.include?("persistentid")
+  end
+
+  def test_model_scene_prop_tables
+    %w[name title filename path description units lat lng northangle
+       georeferenced scenecount].each do |n|
+      assert P::MODEL_PROP_NAMES.include?(n), "missing model!#{n}"
+    end
+    %w[name description usetime transitiontime pagetime].each do |n|
+      assert P::SCENE_PROP_NAMES.include?(n), "missing scene!#{n}"
+    end
+    # Behavior builtins gained synthesized rows so they are reachable.
+    %w[onclick copies copy scaletool].each do |n|
+      assert OpenSketchupDC::OpenDC::DCReader::BUILTIN_UNITS.key?(n),
+             "missing builtin #{n}"
+    end
   end
 end

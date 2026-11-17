@@ -152,7 +152,10 @@ module OpenSketchupDC
 
         g = Graph.new
         ps.each do |p|
-          next if p.internal? || !p.formula?
+          # onclick formulas are action recipes (SET(...), ANIMATE(...)),
+          # not value expressions - keep them out of the value graph or
+          # their action arguments would appear as phantom dependencies.
+          next if p.internal? || !p.formula? || p.name == "onclick"
 
           local = Expression.refs(p.formula).select { |s, _| s.nil? }.map { |_, n| n }
           g.add(p.name, local)
@@ -226,6 +229,10 @@ module OpenSketchupDC
           v
         when "sketchup"
           SkProps.value_of(inst, name, dict_name: OS_DC_DICT)
+        when "model"
+          SkProps.model_value_of(inst, name)
+        when "scene"
+          SkProps.scene_value_of(inst, name)
         else
           sib = node_named(scope, inst, parent_ctx, model)
           if sib

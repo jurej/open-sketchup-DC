@@ -115,7 +115,9 @@ module OpenSketchupDC
         "x" => "DEFAULT", "y" => "DEFAULT", "z" => "DEFAULT",
         "lenx" => "DEFAULT", "leny" => "DEFAULT", "lenz" => "DEFAULT",
         "rotx" => "DEGREES", "roty" => "DEGREES", "rotz" => "DEGREES",
-        "hidden" => "BOOLEAN", "material" => "STRING"
+        "hidden" => "BOOLEAN", "material" => "STRING",
+        "onclick" => "STRING", "copies" => "INTEGER",
+        "copy" => "INTEGER", "scaletool" => "STRING"
       }.freeze
 
       # Units a bare number in a _<attr>_formula slot is interpreted in:
@@ -159,21 +161,35 @@ module OpenSketchupDC
       end
 
       # Live values for every builtin we synthesize, read straight off the
-      # entity's transform/bounds/flags (inches, degrees).
+      # entity's transform/bounds/flags (inches, degrees). The behavior
+      # builtins (onclick, copies, copy, scaletool) have no transform to
+      # read - they surface stored state (or the classic default) so the
+      # attrs are adoptable: onclick in particular is only reachable as a
+      # formula when a row exists to hang the fx editor off.
       def builtin_values(entity, dict_name)
         t = entity.transformation
         o = t.origin.to_a
         rx, ry, rz = euler_angles(t)
-        lens = %w[x y z].zip(t.axes).map do |a, ax|
-          Applier.nominal(entity, a, dict_name).to_f * ax.length
+        # xaxis/yaxis/zaxis are normalized directions - the scale lives
+        # on xscale/yscale/zscale (verified: xaxis.length stays 1.0 for
+        # scaled transforms, so len* would never track external scaling).
+        lens = %w[x y z].zip([t.xscale, t.yscale, t.zscale]).map do |a, s|
+          Applier.nominal(entity, a, dict_name).to_f * s
         end
+        d = dict_of(entity, dict_name)
+        d ||= dict_of(entity.definition, dict_name) if component?(entity)
 
         {
           "x" => o[0], "y" => o[1], "z" => o[2],
           "lenx" => lens[0], "leny" => lens[1], "lenz" => lens[2],
           "rotx" => rx, "roty" => ry, "rotz" => rz,
           "hidden" => entity.hidden?,
-          "material" => material_name(entity)
+          "material" => material_name(entity),
+          "onclick" => "",
+          "copies" => dict_get(d, "copies").to_i,
+          "copy" => dict_get(dict_of(entity, dict_name), "_osdc_copy").to_i,
+          "scaletool" => dict_get(d, "_scaletool") || dict_get(d, "scaletool") ||
+                        "x, y, z"
         }
       end
 

@@ -64,6 +64,7 @@ module OpenSketchupDC
       @selection_model = nil
       @watched = []
       @dict_owners = {}
+      @entity_targets = {}
 
       module_function
 
@@ -109,6 +110,7 @@ module OpenSketchupDC
         end
         @watched = []
         @dict_owners = {}
+        @entity_targets = {}
 
         Selection.targets(model).each do |t|
           attach(t, t)
@@ -119,6 +121,7 @@ module OpenSketchupDC
       def attach(target, holder)
         holder.add_observer(@entity_spy)
         @watched << holder
+        (@entity_targets[holder] ||= []) << target
         [DC_DICT, OS_DC_DICT].each do |dn|
           d = DCReader.dict_of(holder, dn)
           next if d.nil?
@@ -137,6 +140,13 @@ module OpenSketchupDC
 
       def owner_of_dict(dict_entity)
         @dict_owners[dict_entity]
+      end
+
+      # The selection targets a watched entity/definition maps back to.
+      # Transform and other non-dictionary changes arrive with the entity
+      # itself, not a dictionary - this finds who to recompute.
+      def targets_of(entity)
+        @entity_targets[entity] || []
       end
     end
   end

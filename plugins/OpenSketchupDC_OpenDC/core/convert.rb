@@ -17,8 +17,12 @@ module OpenSketchupDC
     module Convert
       module_function
 
+      # Converts any component/group: with a classic dict the attributes
+      # migrate, without one the entity still joins the osdc tree (the
+      # marker + nominals make it a blank-slate Open DC component).
       def to_open_dc(entity)
-        return false unless DCReader.dynamic?(entity)
+        return false unless entity.is_a?(Sketchup::ComponentInstance) ||
+                            entity.is_a?(Sketchup::Group)
         return false if DCReader.engine_of(entity) == :osdc
 
         model = Sketchup.active_model
@@ -47,7 +51,13 @@ module OpenSketchupDC
 
       def convert_target(t)
         dcd = dict_of(t, DC_DICT)
-        return if dcd.nil?
+        if dcd.nil?
+          # Plain entity: no attributes to migrate, but the marker claims
+          # it for our engine and creates the open_dc dict so params and
+          # _len*_nominal have somewhere to land.
+          t.set_attribute(OS_DC_DICT, "_engine", ENGINE_OS)
+          return
+        end
 
         snapshot = {}
         dcd.each do |k, v|

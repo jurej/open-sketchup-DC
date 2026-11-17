@@ -1150,6 +1150,14 @@ window.OpenDC = (function () {
         pool = (state.skprops || []).map(function (n) {
           return { label: n, insert: n, kind: "skp" };
         });
+      } else if (scope === "model") {
+        pool = (state.modelprops || []).map(function (n) {
+          return { label: n, insert: n, kind: "skp" };
+        });
+      } else if (scope === "scene") {
+        pool = (state.sceneprops || []).map(function (n) {
+          return { label: n, insert: n, kind: "skp" };
+        });
       } else {
         var dd = (e.dictionaries || []).find(function (d) {
           return d.name.toLowerCase() === scope;
@@ -1173,6 +1181,12 @@ window.OpenDC = (function () {
     });
     (state.skprops || []).forEach(function (n) {
       items.push({ label: "sketchup!" + n, insert: "sketchup!" + n, kind: "skp" });
+    });
+    (state.modelprops || []).forEach(function (n) {
+      items.push({ label: "model!" + n, insert: "model!" + n, kind: "skp" });
+    });
+    (state.sceneprops || []).forEach(function (n) {
+      items.push({ label: "scene!" + n, insert: "scene!" + n, kind: "skp" });
     });
     (e.dictionaries || []).forEach(function (d) {
       if (!/^[a-z_][a-z0-9_]*$/i.test(d.name)) return;

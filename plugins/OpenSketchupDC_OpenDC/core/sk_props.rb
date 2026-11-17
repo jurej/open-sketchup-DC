@@ -38,8 +38,8 @@ module OpenSketchupDC
         ["creator",      "Creator",       true,
          "sketchup!creator - definition creator field (components only)"],
         ["layer",        "Layer (tag)",   true,
-         "sketchup!layer - assigned layer/tag name; write requires an " \
-         "existing layer"],
+         "sketchup!layer - assigned layer/tag name; an unknown name " \
+         "falls back to Untagged (Layer0)"],
         ["guid",         "GUID",          false,
          "sketchup!guid - definition/group persistent GUID"],
         ["persistentid", "Persistent ID", false,
@@ -54,6 +54,34 @@ module OpenSketchupDC
 
       PROP_NAMES = PROPS.map(&:first).freeze
       WRITABLE = PROPS.select { |_, _, w, _| w }.map(&:first).freeze
+
+      # Model-level globals (the `model!` formula scope) - read-only
+      # inputs, there is no engine-driven way to rename a file or move
+      # the model's geo origin from a component formula.
+      MODEL_PROPS = [
+        ["name",          "model file name (no extension)"],
+        ["title",         "Model Info title"],
+        ["filename",      "full file path ('' for unsaved)"],
+        ["path",          "containing folder ('' for unsaved)"],
+        ["description",   "Model Info description"],
+        ["units",         "length units: in|ft|mm|cm|m"],
+        ["lat",           "geo-location latitude"],
+        ["lng",           "geo-location longitude"],
+        ["northangle",    "north angle in degrees"],
+        ["georeferenced", "whether the model has geo-location"],
+        ["scenecount",    "number of scenes/pages"]
+      ].freeze
+      MODEL_PROP_NAMES = MODEL_PROPS.map(&:first).freeze
+
+      # Active scene/page (the `scene!` formula scope) - also read-only.
+      SCENE_PROPS = [
+        ["name",           "active scene name ('' when none)"],
+        ["description",    "active scene description"],
+        ["usetime",        "whether the scene animates"],
+        ["transitiontime", "scene transition seconds"],
+        ["pagetime",       "scene dwell seconds"]
+      ].freeze
+      SCENE_PROP_NAMES = SCENE_PROPS.map(&:first).freeze
 
       # Dicts our engines own - resolvable via scope but not listed in the
       # panel's "Attribute dictionaries" section (they're the params).
@@ -164,10 +192,9 @@ module OpenSketchupDC
 
           owner.send(:"#{n}=", v)
         when "layer"
-          lay = entity.model.layers[v]
-          raise "no layer/tag named '#{v}'" if lay.nil?
-
-          entity.layer = lay
+          # Missing names resolve to nil, and assigning nil lands the
+          # entity on Untagged/Layer0 - the documented fallback.
+          entity.layer = entity.model.layers[v]
         end
       end
 
@@ -190,8 +217,54 @@ module OpenSketchupDC
         scope, key = name.to_s.split("!", 2)
         return nil if scope.nil? || key.nil? || key.empty?
         return [:sketchup, key] if scope.casecmp("sketchup").zero?
+        # model!/scene! are reserved read-only scopes - they resolve to
+        # global inputs in formulas, they can't be driven.
+        return nil if %w[model scene].any? { |s| scope.casecmp(s).zero? }
 
         [:dict, scope, key]
+      end
+
+      # --- model / scene global reads (model!, scene! scopes) -----------
+
+      # Live model property for `model!<name>` refs. `entity` may be the
+      # model itself or anything inside it.
+      def model_value_of(entity, name)
+        m = entity.is_a?(Sketchup::Model) ? entity : entity.model
+        n = name.to_s.downcase
+        raise Expression::Error, "unknown model attribute '#{n}'" unless MODEL_PROP_NAMES.include?(n)
+
+        case n
+        when "name"          then m.name.to_s
+        when "title"         then m.title.to_s
+        when "filename"      then m.filename.to_s
+        when "path"          then m.filename.to_s.empty? ? "" : File.dirname(m.filename)
+        when "description"   then m.description.to_s
+        when "units"         then UNITS_NAMES[m.options["UnitsOptions"]["LengthUnit"].to_i] || "in"
+        when "lat"           then m.shadow_info["Latitude"].to_f
+        when "lng"           then m.shadow_info["Longitude"].to_f
+        when "northangle"    then m.shadow_info["NorthAngle"].to_f
+        when "georeferenced" then m.georeferenced?
+        when "scenecount"    then m.pages.count
+        end
+      end
+
+      # SketchUp LengthUnit enum -> classic unit token.
+      UNITS_NAMES = %w[in ft mm cm m].freeze
+
+      # Live active-scene property for `scene!<name>` refs.
+      def scene_value_of(entity, name)
+        m = entity.is_a?(Sketchup::Model) ? entity : entity.model
+        n = name.to_s.downcase
+        raise Expression::Error, "unknown scene attribute '#{n}'" unless SCENE_PROP_NAMES.include?(n)
+
+        pg = m.pages.selected_page
+        case n
+        when "name"           then pg&.name.to_s
+        when "description"    then pg&.description.to_s
+        when "usetime"        then pg&.use_time || false
+        when "transitiontime" then pg&.transition_time.to_f
+        when "pagetime"       then pg&.time.to_f
+        end
       end
 
       # --- attribute dictionaries ------------------------------------------
