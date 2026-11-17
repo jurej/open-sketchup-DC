@@ -14,8 +14,19 @@ capabilities the classic extension can't do:
 | Expression node-graph editor (visual formula building) | beta 1 |
 | Interactive dependency graph (wire attributes, edit links) | beta 1 |
 | Open engine (`open_dc`) — deterministic evaluation, `global!` cross-component links | beta 1 (opt-in Convert) |
+| Native SketchUp props as attributes — `sketchup!name`, `sketchup!layer` … | beta 1 |
+| Foreign attribute dictionaries — `su_instanceset!price`, `DICTATTR()` | beta 1 |
+| Formula **drivers**: fx on writable native props / dict keys | beta 1 |
+| Read-only input scopes `model!` and `scene!` | beta 1 |
+| Convert plain (non-dynamic) components; live recompute on scale/move/rotate | beta 1 |
 | Reusable presets / partial component definitions | planned (beta 2) |
 | Scale-tool semantics (directional scale flags) | planned (beta 2) |
+
+**Feature tour with screenshots:** [docs/features.md](docs/features.md)
+
+| Parametric picket fence — before | After `width` ×2 (pickets auto-respawn) |
+|---|---|
+| ![before](docs/img/fence_before.png) | ![after](docs/img/fence_after.png) |
 
 ## Two engine modes
 
@@ -24,10 +35,15 @@ capabilities the classic extension can't do:
   Components stay 100 % portable (SketchUp Web, iPad, users without this
   plugin).
 - **Open DC mode** — opt-in per component via *Extensions → Open DC →
-  Convert to Open DC*. Our own sandboxed formula engine evaluates a
+  Convert to Open DC* (works on plain components/groups too — no prior
+  attributes needed). Our own sandboxed formula engine evaluates a
   `dynamic_attributes`-compatible dialect plus `global!name` references
-  (model-level parameters — links across separate components).
-  Convert/Revert round-trips through a stored snapshot.
+  (model-level parameters — links across separate components),
+  `sketchup!prop` native properties, foreign dictionaries via
+  `dictname!key`/`DICTATTR()`, and read-only `model!`/`scene!` globals.
+  Writable props and dict keys can carry **driver formulas** that push
+  computed values back into SketchUp. Convert/Revert round-trips through
+  a stored snapshot.
 
 ## Install
 
@@ -47,6 +63,10 @@ Requires **SketchUp 2024+** (Windows/Mac).
   - **Configure mode** (⚙ gear in the toolbar): the author view — formula
     editing, units, display rules, option lists, tooltips, attribute
     ordering, sections, rename, add/delete attributes, engine convert.
+    Two extra foldable sections appear here only: **SketchUp** (native
+    entity properties, read + fx-drivable writes) and **Attribute
+    dictionaries** (every other dictionary on the entity, grouped and
+    pickable — no hand-typed names).
   - **Sections**: hover between rows in Configure and click `+ divider`
     to split a group; click a divider's name to rename, `×` to remove,
     drag the `⠇` grip to reorder. Stored as classic `&Title&` markers in
@@ -64,7 +84,8 @@ Requires **SketchUp 2024+** (Windows/Mac).
     ("'Valles GAL2' looks like a text value - wrap it in double quotes")
     and blocks invalid saves.
   - **Dependency graph** (Configure → graph button): every attribute as a
-    node, edges show which formulas reference which attributes. Drag
+    node — including formula-less parameters and builtins, which become
+    wire targets (the edge writes + adopts a formula for you). Drag
     `out → deps` to rewire a formula, Del on an edge to unlink,
     double-click a node to open its formula canvas. Cycle-safe.
   - **Batch edit**: select multiple DCs → a shared-parameter section
@@ -72,12 +93,16 @@ Requires **SketchUp 2024+** (Windows/Mac).
     numeric fields reject text, lists reject non-options, with
     descriptive errors; `10cm`/`18"` literals convert correctly.
 - *Extensions → Open DC → Interact Tool* — click a DC to run its `onClick`
-  formula (works on nested children: the click bubbles up to the first
-  ancestor with `onClick`, like the classic Interact tool). Supports
-  `SET`, `REDRAW`, `ALERT`, `GOTOSCENE` on both engines; `ANIMATE*` steps
-  directly to the next state (interpolation is a follow-up).
-- *Extensions → Open DC → Convert / Revert* — switch engines per component.
-- *Recompute Selected* — manual redraw/evaluate.
+  formula (editable as a first-class attribute row; works on nested
+  children: the click bubbles up to the first ancestor with `onClick`,
+  like the classic Interact tool). Supports `SET`, `REDRAW`, `ALERT`,
+  `GOTOSCENE` on both engines; `ANIMATE*` steps directly to the next
+  state (interpolation is a follow-up).
+- *Extensions → Open DC → Convert / Revert* — switch engines per
+  component; plain (non-dynamic) components convert directly.
+- *Recompute Selected* — manual redraw/evaluate. Moving, scaling or
+  rotating a converted component with normal SketchUp tools recomputes
+  automatically — `lenx`/`leny`/`lenz` track real `x/y/zscale`.
 
 ## Formula language (Open DC mode)
 
@@ -85,14 +110,23 @@ Requires **SketchUp 2024+** (Windows/Mac).
 10cm  25.4mm  2'  4"        # lengths → inches
 "text" & value              # string concat
 + - * / % ^  = <> < > <= >= AND OR NOT
-attr  parent!attr  name!attr  global!attr   # references
+attr  parent!attr  name!attr  global!attr          # references
+sketchup!name  sketchup!layer                      # native entity props
+su_instanceset!price  DICTATTR("dict","key")       # foreign dictionaries
+model!units  scene!name                            # read-only globals
 IF CHOOSE CURRENT MIN MAX ROUND INT FLOOR CEILING ABS SQRT
 SIN COS TAN ASIN ACOS ATAN PI DEGREES RADIANS
 LARGEST SMALLEST OPTIONINDEX OPTIONVALUE NEAREST
+SET REDRAW ALERT GOTOSCENE ANIMATE*                # onClick actions
 ```
 
 `global!` parameters live on the model itself — set them via the console or
 future UI: `Sketchup.active_model.set_attribute("open_dc", "height", 100)`.
+Writable `sketchup!` props and foreign dict keys accept **driver
+formulas**: attach fx in the panel's Configure sections and every
+recompute writes the computed value back to SketchUp (e.g.
+`sketchup!layer` driven by `IF(width > 100, "heavy", "light")`; unknown
+tag names safely fall back to Layer0/Untagged).
 
 ## Compatibility
 

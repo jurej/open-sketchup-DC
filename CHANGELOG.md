@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Attributes beyond the parameter list
+
+- **Native SketchUp properties** as attributes: `sketchup!name`,
+  `sketchup!instname`, `sketchup!layer`, `sketchup!description`,
+  `sketchup!summary`/`itemcode`/`creator` (writable) and
+  `sketchup!guid`/`persistentid`/`entityid`/`typename`/`instances`
+  (read-only inputs).
+- **Foreign attribute dictionaries**: every other dictionary on the
+  entity is readable via `dictname!key` or `DICTATTR("dict","key")`.
+  Enumerated from the entity — pick, don't type.
+- **Driver formulas** (Open DC engine): attach fx to any writable
+  `sketchup!` prop or foreign dict key and every recompute writes the
+  value back to SketchUp (rename the definition, drive
+  `su_instanceset!price`, tag by formula). Broken drivers stop applying
+  and flag `apply:` errors instead of rewriting stale caches.
+- **Read-only input scopes** `model!` (name/title/path/units/lat/lng/
+  north angle/georeferenced/scene count) and `scene!` (active scene
+  name/description/times) — usable in formulas and as node-editor inputs.
+- Panel: foldable **SketchUp** and **Attribute dictionaries** sections in
+  Configure mode only; the Options view stays clean. Autocomplete and
+  both node editors gained `sketchup!`/`dict`/`model!`/`scene!` entries.
+
+### Fixes
+
+- Plain components/groups convert to Open DC directly — no pre-existing
+  attribute needed (`_engine` + nominal dims seeded on conversion).
+- Scaling/moving/rotating a component recomputes dependents: observers
+  now map the entity itself to its Open DC target, and `lenx/y/z` use
+  real `transformation.x/y/zscale` (axis vectors are normalized — their
+  `.length` was always 1). Identical transform writes are skipped so
+  applies can't loop.
+- `sketchup!layer` with an unknown tag name falls back to
+  Layer0/Untagged.
+- `onClick`, `copies`, `copy`, `scaletool` appear as real attribute rows
+  (fx-editable); `onClick` validates with action functions and stays out
+  of value evaluation.
+- Dependency graph includes formula-less parameters and builtins as
+  nodes — wiring a dependency into one writes + adopts the formula.
+
 ## v0.1.1 — beta 1.1
 
 - **Right-click context menu**: an *Open DC* submenu (Parameter Panel,

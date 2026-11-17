@@ -143,7 +143,10 @@ module OpenSketchupDC
           end
           ps.params << builtin_param(name, v, model_units)
         end
-      rescue StandardError
+      rescue StandardError => e
+        # Builtins are cosmetic - never break a read over them, but don't
+        # hide a real failure either.
+        puts "Open DC: builtins skipped on #{entity}: #{e.message}"
         ps
       end
 
@@ -156,7 +159,8 @@ module OpenSketchupDC
                   units: BUILTIN_UNITS[name],
                   formulaunits: BUILTIN_FORMULAUNITS[name],
                   model_units: model_units,
-                  tooltip: "Built-in SketchUp attribute - editing adopts it into the component",
+                  tooltip: "Built-in SketchUp attribute - set a display rule " \
+                           "(fx) to show it in the main panel",
                   builtin: true)
       end
 

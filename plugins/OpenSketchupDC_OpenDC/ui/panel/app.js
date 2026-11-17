@@ -151,9 +151,11 @@ window.OpenDC = (function () {
     var cards = ents.map(function (e) {
       var cfg = configMode;
       var params = (e.params || []).filter(function (p) {
+        // Synthesized SketchUp attrs are configure-view only - they join
+        // the main panel once a display rule (fx -> access) adopts them.
         // Driver attrs (name contains "!") live in the foldable sections.
         return p.name.indexOf("!") < 0 && (cfg ? match(p, q)
-          : (match(p, q) && p.access !== "NONE" && !p.internal));
+          : (match(p, q) && p.access !== "NONE" && !p.internal && !p.builtin));
       });
       return '<div class="card" data-eid="' + esc(e.entityId) + '">' +
         '<header>' +
