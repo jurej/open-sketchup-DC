@@ -571,6 +571,9 @@
     canvas.clear_background = true;
     canvas.clear_background_color = cssVar("--bg");
     canvas.allow_searchbox = false;
+    // Legacy: strokes the canvas pixel bounds in graph space (#235) -
+    // shows as a stray blue frame whenever the view is offset.
+    canvas.render_canvas_border = false;
     // Centre arrow markers use _centreAngle (verified forward); the
     // render_connection_arrows chevrons read backwards, so leave them off.
     canvas.render_connection_arrows = false;
